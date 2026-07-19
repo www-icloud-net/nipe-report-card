@@ -1,0 +1,17 @@
+{
+  "name": "Nipe Report Card Enterprise v6.7.0 Final Build",
+  "short_name": "Nipe Reports",
+  "description": "Academic reporting and student records",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#0a2f73",
+  "icons": [
+    {
+      "src": "assets/nipe-school-logo.png",
+      "sizes": "500x500",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
