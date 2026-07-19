@@ -1,7 +1,7 @@
 {
-  "name": "Nipe Report Card Enterprise v6.7.0 Final Build",
+  "name": "Nipe Report Card Enterprise v6.7.1 Reusable Schools Edition",
   "short_name": "Nipe Reports",
-  "description": "Academic reporting and student records",
+  "description": "Academic reporting, reusable school package generation, and student records",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",

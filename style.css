@@ -697,3 +697,25 @@ td{font-size:13px}
 .chip.danger{background:#fdebed;color:#9c1c2c;border-color:#f2bcc3}
 .chip.success{background:#e8f7ef;color:#17603b;border-color:#a8ddc1}
 @media(max-width:760px){.backup-recovery-panel{grid-column:auto}.backup-history{max-height:360px}}
+
+/* Reusable school package generator and GitHub navigator */
+.package-generator-layout{align-items:start}
+.package-logo-preview{display:flex;align-items:center;gap:16px;padding:15px;border:1px solid #cfdaea;border-radius:14px;background:#f7faff}
+.package-logo-preview img{width:88px;height:88px;object-fit:contain;border-radius:14px;background:#fff;border:1px solid #d8e2ef;padding:7px;flex:0 0 auto}
+.package-logo-preview div{display:grid;gap:5px;min-width:0}
+.package-logo-preview strong{font-size:17px;color:var(--navy)}
+.package-logo-preview span{font-size:13px;line-height:1.5;color:var(--muted)}
+.navigator-steps{display:grid;gap:11px}
+.navigator-steps article{display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid #dbe4f0;border-radius:13px;background:#fbfdff}
+.navigator-steps article>b{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--blue-2);color:var(--navy);font-weight:850;flex:0 0 auto}
+.navigator-steps article div{display:grid;gap:3px}
+.navigator-steps article strong{color:var(--ink)}
+.navigator-steps article span{color:var(--muted);font-size:13px;line-height:1.45}
+.github-link-grid{display:grid;gap:10px;margin-top:16px}
+.github-link-card{display:grid;gap:4px;padding:13px 14px;border:1px solid #cbd9eb;border-radius:12px;background:#fff;color:var(--navy);text-decoration:none;transition:.18s transform,.18s box-shadow,.18s border-color}
+.github-link-card:hover{transform:translateY(-1px);border-color:#8fb2e1;box-shadow:0 8px 20px rgba(13,94,200,.1)}
+.github-link-card span{font-size:12px;color:var(--muted)}
+.generator-progress{display:flex;align-items:center;gap:10px;padding:13px;border-radius:12px;background:#edf4ff;border:1px solid #c8daf4;color:var(--navy)}
+.generator-progress>span:last-child{color:var(--muted);font-size:13px}
+.spinner.small{width:20px;height:20px;border-width:3px;margin:0}
+@media(max-width:760px){.package-logo-preview{align-items:flex-start}.package-logo-preview img{width:72px;height:72px}}

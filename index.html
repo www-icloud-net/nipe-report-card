@@ -13,7 +13,7 @@
 </head>
 <body>
   <div id="loader" class="loader-screen" aria-live="polite">
-    <img src="assets/nipe-school-logo.png" alt="">
+    <img data-school-logo src="assets/nipe-school-logo.png" alt="">
     <span class="spinner"></span>
   </div>
 
@@ -22,9 +22,9 @@
   <main id="authView" class="auth-view hidden">
     <section class="auth-card">
       <div class="brand-lockup">
-        <img src="assets/nipe-school-logo.png" alt="Nipe International School">
+        <img data-school-logo src="assets/nipe-school-logo.png" alt="Nipe International School">
         <div>
-          <h1>Nipe International School</h1>
+          <h1 data-school-name>Nipe International School</h1>
           <p>Student Report Card System</p>
         </div>
       </div>
@@ -51,8 +51,8 @@
   <main id="mfaView" class="auth-view hidden">
     <section class="auth-card">
       <div class="brand-lockup compact">
-        <img src="assets/nipe-school-logo.png" alt="">
-        <div><h1>Security verification</h1><p>Nipe International School</p></div>
+        <img data-school-logo src="assets/nipe-school-logo.png" alt="">
+        <div><h1>Security verification</h1><p data-school-name>Nipe International School</p></div>
       </div>
       <div id="mfaQr" class="mfa-qr hidden"></div>
       <form id="mfaForm" class="form-stack">
@@ -70,7 +70,7 @@
   <div id="appShell" class="app-shell hidden">
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-brand">
-        <img id="brandLogo" src="assets/nipe-school-logo.png" alt="">
+        <img id="brandLogo" data-school-logo src="assets/nipe-school-logo.png" alt="">
         <div><strong id="brandName">Nipe International School</strong><small>Report Card System</small></div>
       </div>
       <nav id="mainNav" class="nav-list" aria-label="Primary"></nav>

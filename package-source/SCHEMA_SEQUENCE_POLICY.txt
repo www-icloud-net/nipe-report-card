@@ -1,0 +1,22 @@
+NIPE REPORT CARD ENTERPRISE v6.7.0 FINAL BUILD
+PERMANENT SQL SEQUENCE POLICY
+
+The confirmed permanent database sequence is now:
+
+01_schema_foundation.sql
+02_schema_operations.sql
+03A_schema_hardening_persistence_and_jobs.sql
+03B1_schema_staff_academics_and_signatures.sql
+03B2_schema_governance_workflow_and_upgrades.sql
+04_schema.sql
+05_schema.sql
+
+POLICY
+1. Files 01 through 04 are frozen historical foundations and must not be renamed or reordered.
+2. All v6.7.0 final-build database changes are contained in 05_schema.sql.
+3. Future SQL upgrades must continue inside 05_schema.sql only while it remains safely executable in the Supabase SQL Editor.
+4. When 05_schema.sql approaches the practical Supabase execution or line limit, begin 06_schema.sql.
+5. Continue sequentially with 07_schema.sql, 08_schema.sql and later files when required.
+6. Do not create extra temporary numbered schema files between permanent sequence numbers.
+7. Fresh installations run every permanent file in the exact order shown above.
+8. Upgrades from v6.6.10 run only 05_schema.sql, then deploy the updated Edge Functions and frontend.

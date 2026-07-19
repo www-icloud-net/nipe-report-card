@@ -1,0 +1,135 @@
+{
+  "product": "Report Card Enterprise",
+  "version": "6.7.1 Reusable Schools Edition",
+  "release_date": "2026-07-19",
+  "baseline": "Confirmed working v6.7.0 Final Build",
+  "edition": "Reusable Schools, Supabase Dashboard and GitHub Pages Edition",
+  "database_files": [
+    "01_schema_foundation.sql",
+    "02_schema_operations.sql",
+    "03A_schema_hardening_persistence_and_jobs.sql",
+    "03B1_schema_staff_academics_and_signatures.sql",
+    "03B2_schema_governance_workflow_and_upgrades.sql",
+    "04_schema.sql",
+    "05_schema.sql"
+  ],
+  "schema_policy": {
+    "frozen_through": "04_schema.sql",
+    "current_upgrade_file": "05_schema.sql",
+    "next_file_when_limit_reached": "06_schema.sql"
+  },
+  "edge_functions": {
+    "admin-user-management": {
+      "file": "supabase/functions/admin-user-management/index.ts",
+      "verify_jwt": true
+    },
+    "notification-dispatcher": {
+      "file": "supabase/functions/notification-dispatcher/index.ts",
+      "verify_jwt": false,
+      "internal_auth": "x-cron-secret"
+    },
+    "scheduled-backup": {
+      "file": "supabase/functions/scheduled-backup/index.ts",
+      "verify_jwt": false,
+      "internal_auth": "x-cron-secret for schedules; JWT plus MFA AAL2 for manual administration"
+    }
+  },
+  "required_edge_secrets": [
+    "NIS_CRON_SECRET",
+    "NIS_BACKUP_ENCRYPTION_KEY"
+  ],
+  "optional_edge_secrets": [
+    "RESEND_API_KEY",
+    "NIS_EMAIL_FROM",
+    "NIS_BACKUP_MAX_OBJECTS",
+    "NIS_BACKUP_MAX_BYTES",
+    "NIS_BACKUP_VERIFY_MAX_OBJECTS"
+  ],
+  "vault_secrets": [
+    "nis_project_url",
+    "nis_cron_secret"
+  ],
+  "private_storage_buckets": [
+    "student-photos",
+    "report-pdfs",
+    "system-backups",
+    "headteacher-signatures",
+    "report-card-templates"
+  ],
+  "scheduled_jobs": {
+    "nis-scheduled-backup": "15 2 * * *",
+    "nis-backup-verification": "15 3 * * 0"
+  },
+  "self_hosted_dependencies": {
+    "@supabase/supabase-js": "2.110.5",
+    "qrcode": "1.0.0",
+    "pdfjs-dist": "3.11.174",
+    "jszip": "3.10.1",
+    "docx-preview": "0.4.0",
+    "html2canvas": "1.4.1"
+  },
+  "final_build_improvements": [
+    "Complete encrypted database, Auth metadata and private Storage backup",
+    "AES-256-GCM NISB2 encryption with separate required backup key",
+    "Retention policy, weekly verification and administrator-confirmed off-site copy tracking",
+    "Offline decryption and recovery package generation",
+    "Consistent Edge Function service-key handling and exact pinned imports",
+    "Local pinned frontend dependencies without runtime CDN dependence",
+    "Approval-gated Term 3 promotion enrolment creation",
+    "New permanent 05_schema.sql continuation file",
+    "System Administrator GitHub Navigator and reusable school package generator",
+    "Generated school identity across login, MFA, sidebar, verification, reports, manifest and icons",
+    "Configurable user-account email domain in school settings"
+  ],
+  "frontend_root": [
+    "index.html",
+    "style.css",
+    "app.js",
+    "config.js",
+    "manifest.webmanifest",
+    "service-worker.js",
+    "assets",
+    "tools"
+  ],
+  "github_pages_source": "GITHUB_PAGES_FRONTEND",
+  "documentation": [
+    "README_FIRST_FRESH_INSTALL.txt",
+    "COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md",
+    "QUICK_INSTALL_CHECKLIST.txt",
+    "SUPABASE_DASHBOARD_SETUP.txt",
+    "SCHEMA_SEQUENCE_POLICY.txt",
+    "RELEASE_NOTES_6_7_0_FINAL.txt",
+    "UPGRADE_FROM_V6_6_10_TO_V6_7_0_FINAL.txt",
+    "FINAL_BACKUP_AND_RESTORE_RUNBOOK.md",
+    "SHA256SUMS.txt",
+    "RELEASE_NOTES_6_7_1_REUSABLE_SCHOOLS.txt",
+    "UPGRADE_FROM_V6_7_0_TO_V6_7_1_REUSABLE.txt",
+    "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md",
+    "Report_Card_Enterprise_v6_7_1_VALIDATION_REPORT.txt",
+    "SHA256SUMS.txt"
+  ],
+  "verification_scope": {
+    "package_level": "Static syntax, SQL parsing, file parity, dependency, backup coverage, governance, checksum and archive tests",
+    "not_available_in_build_environment": "Live Supabase SQL execution, production RLS acceptance, Edge runtime duration tests and real-role browser acceptance",
+    "required_after_deployment": "Complete the acceptance procedures in the setup and upgrade guides"
+  },
+  "reusable_school_generator": {
+    "navigation": "System Administrator > GitHub Navigator, immediately after Settings",
+    "outputs": [
+      "Complete fresh package ZIP",
+      "Branded GITHUB_PAGES_FRONTEND",
+      "SCHOOL_IDENTITY_SETUP.sql",
+      "Seven ordered SQL files",
+      "Three Edge Functions",
+      "Recovery tools and guides"
+    ],
+    "branding": [
+      "school name",
+      "school logo",
+      "short application name",
+      "report-number prefix",
+      "user-account email domain"
+    ],
+    "security": "Rejects Supabase Secret and service-role keys; generation is browser-local and does not alter the current installation"
+  }
+}

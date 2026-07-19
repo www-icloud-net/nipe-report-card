@@ -1,0 +1,31 @@
+NIPE REPORT CARD ENTERPRISE v6.7.0 FINAL BUILD
+QUICK FRESH-INSTALL CHECKLIST
+
+[ ] Create a new Supabase project and save the Project URL and Publishable key.
+[ ] Generate two different secure values: NIS_CRON_SECRET and NIS_BACKUP_ENCRYPTION_KEY.
+[ ] Run 01_schema_foundation.sql.
+[ ] Run 02_schema_operations.sql and confirm 02 SCHEMA OPERATIONS: PASS.
+[ ] Deploy admin-user-management with Verify JWT enabled.
+[ ] Deploy notification-dispatcher with Verify JWT disabled.
+[ ] Deploy scheduled-backup with Verify JWT disabled.
+[ ] Add Edge secrets NIS_CRON_SECRET and NIS_BACKUP_ENCRYPTION_KEY.
+[ ] Add RESEND_API_KEY and NIS_EMAIL_FROM only when email delivery is required.
+[ ] Through SQL Editor, create Vault secrets nis_project_url and nis_cron_secret.
+[ ] Run 03A_schema_hardening_persistence_and_jobs.sql.
+[ ] Run 03B1_schema_staff_academics_and_signatures.sql.
+[ ] Run 03B2_schema_governance_workflow_and_upgrades.sql.
+[ ] Run 04_schema.sql and confirm 04 SCHEMA: PASS.
+[ ] Run 05_schema.sql and confirm 05 SCHEMA: PASS.
+[ ] Confirm all five Storage buckets are private.
+[ ] Confirm cron jobs nis-notification-dispatcher, nis-scheduled-backup and nis-backup-verification exist.
+[ ] Create the intended first System Administrator before any test account.
+[ ] Edit GITHUB_PAGES_FRONTEND/config.js with the Project URL and Publishable key.
+[ ] Upload the CONTENTS of GITHUB_PAGES_FRONTEND to the GitHub repository root.
+[ ] Enable GitHub Pages from main /(root).
+[ ] Configure the GitHub Pages URL in Supabase Authentication URL Configuration.
+[ ] Sign in, complete MFA and configure school identity, academic periods, classes, subjects and users.
+[ ] Create one encrypted full backup from Settings.
+[ ] Verify the backup successfully.
+[ ] Download the encrypted package, copy it to a separate protected location, then confirm the off-site copy in Settings.
+[ ] Test one passing Term 3 report before approval: it must show Eligible, awaiting approval.
+[ ] Approve or publish the report: the next-year enrolment must then be created.
