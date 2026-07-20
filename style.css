@@ -721,7 +721,7 @@ td{font-size:13px}
 @media(max-width:760px){.package-logo-preview{align-items:flex-start}.package-logo-preview img{width:72px;height:72px}}
 
 
-/* v6.7.3 compact vertical scrolling for operational directories and report creation */
+/* v6.7.4 compact vertical scrolling for operational directories and report creation */
 #studentResults .table-wrap,
 #teacherResults .table-wrap,
 #headteacherResults .table-wrap,

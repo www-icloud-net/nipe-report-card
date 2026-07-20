@@ -1,0 +1,13 @@
+REPORT CARD ENTERPRISE v6.7.4 REUSABLE SCHOOLS EDITION
+RELEASE NOTES: COMPACT REPORT TABLES AND BULK CLASS DOWNLOADS
+
+1. Report-card remarks are rendered in deep blue in both the approved built-in design and uploaded class-range templates.
+2. The subject-results table now contains only the actual subjects plus exactly one blank line box after the final subject.
+3. The summary, comments, QR verification, current Principal signature, report number, and date move upward with the compact table.
+4. Uploaded template backgrounds are cleared and rebuilt in the dynamic report area so former excess grid lines do not remain visible.
+5. System Administrators, Class Teachers, and Subject Teachers can download all accessible published reports for one class and term as a ZIP package.
+6. Every bulk-downloaded PDF is regenerated with current subject positions, colours, typography, photograph, template, and Principal signature.
+7. The ZIP includes a manifest showing included reports, Storage refresh status, and isolated errors.
+8. One failed report does not prevent successfully generated reports from being downloaded.
+9. No database schema or Edge Function changes are required.
+10. The reusable-school generator produces v6.7.4 packages containing the same improvements.

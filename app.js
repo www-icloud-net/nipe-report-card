@@ -74,7 +74,7 @@
     passwordChangeRequired:false, userAccessEditingUserId:"",
     workspace:null, studentClassFilter:"", reportClassFilter:"", reportTemplates:null, reportTemplatesLoadedAt:0,
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
-    packageLogoPreviewUrl:"", packageGeneratorBusy:false
+    packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -1774,6 +1774,7 @@
           ${can("import_scores")?`<button class="button outline" id="scoreImport">Import scores</button>`:""}
           <button class="button outline" id="manualReportTemplate">Manual template</button>
           <button class="button outline" id="reportExport">Export list</button>
+          ${canBulkDownloadPublishedReports()?`<button class="button secondary" id="reportBulkDownload">Bulk class PDFs</button>`:""}
           ${can("create_reports")?`<button class="button primary" id="reportNew">New report</button>`:""}
         </div></div>
       <section class="panel">
@@ -1790,6 +1791,7 @@
     byId("scoreImport")?.addEventListener("click",openScoreImport);
     byId("manualReportTemplate")?.addEventListener("click",openManualReportTemplate);
     byId("reportExport")?.addEventListener("click",exportReportList);
+    byId("reportBulkDownload")?.addEventListener("click",openBulkPublishedReportPackage);
     let timer;
     byId("reportSearch").oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{state.reportPage=1;loadReportPage(token)},250)};
     ["reportTerm","reportClass","reportStatus"].forEach(id=>{if(byId(id))byId(id).onchange=()=>{state.reportPage=1;loadReportPage(token)}});
@@ -2297,6 +2299,99 @@
     downloadText("report-cards.csv",[headers.join(","),...(data.rows||[]).map(row=>headers.map(h=>csvCell(row[h])).join(","))].join("\n"),"text/csv");
   }
 
+
+  function canBulkDownloadPublishedReports() {
+    return ["system_admin","class_teacher","subject_teacher"].includes(role());
+  }
+  function safeArchiveSegment(value,fallback="report") {
+    const cleaned=String(value||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"")
+      .replace(/[^A-Za-z0-9._-]+/g,"_").replace(/^_+|_+$/g,"").slice(0,90);
+    return cleaned||fallback;
+  }
+  function openBulkPublishedReportPackage() {
+    if(!canBulkDownloadPublishedReports()){toast("Bulk download unavailable","Only the System Administrator and assigned teachers can download class report packages.","error");return}
+    const selectedTerm=byId("reportTerm")?.value||activeTerm()?.id||"";
+    const selectedClass=byId("reportClass")?.value||state.reportClassFilter||"";
+    modal("Bulk Published Report Cards","Generate the latest official PDFs for one class and term, then download them in a single ZIP package.",`
+      <form id="bulkPublishedReportsForm" class="form-stack">
+        <div class="form-grid">
+          <label class="field"><span>Term</span><select name="term_id" required>${optionList(state.boot.terms||[],"id","name",selectedTerm,"Select term")}</select></label>
+          <label class="field"><span>Class</span><select name="class_id" required>${optionList(state.boot.classes||[],"id","name",selectedClass,"Select class")}</select></label>
+        </div>
+        <div class="template-information"><strong>Latest-format enforcement</strong><span>Every accessible published report is regenerated with the current positions, colours, typography, student photograph, class-range template, and Principal signature before it is added to the ZIP.</span></div>
+        <div id="bulkPublishedReportsProgress" class="template-information hidden" aria-live="polite"><strong>Preparing package</strong><span id="bulkPublishedReportsProgressText">Waiting to start</span></div>
+      </form>`,
+      `<button class="button ghost" id="bulkPublishedReportsCancel" type="button">Cancel</button><button class="button primary" id="bulkPublishedReportsRun" type="button">Download class package</button>`,"small");
+    byId("bulkPublishedReportsCancel").onclick=()=>{if(!state.bulkReportPackageBusy)closeModal()};
+    byId("bulkPublishedReportsRun").onclick=downloadBulkPublishedReportPackage;
+  }
+  async function listAllPublishedReportsForClass(termId,classId) {
+    const rows=[];let page=1,total=Infinity;
+    while(rows.length<total){
+      const data=await rpc("list_report_cards_v6",{
+        target_term_id:termId,target_class_id:classId,target_status:"published",search_text:"",
+        archive_filter:"active",page_number:page,page_size:100
+      });
+      const batch=(data.rows||[]).filter(row=>row.status==="published"&&!row.archived);
+      rows.push(...batch);total=Number(data.total??rows.length);
+      const pageSize=Math.max(1,Number(data.page_size||100));
+      if(!batch.length||page*pageSize>=total)break;
+      page+=1;
+      if(page>1000)throw new Error("The published report list exceeded the safe pagination limit.");
+    }
+    return rows;
+  }
+  async function downloadBulkPublishedReportPackage() {
+    if(state.bulkReportPackageBusy)return;
+    if(!window.JSZip){toast("Bulk download unavailable","The packaged ZIP library did not load. Reload the system and try again.","error");return}
+    const form=byId("bulkPublishedReportsForm");if(!form?.reportValidity())return;
+    const values=formObject(form),term=(state.boot.terms||[]).find(item=>item.id===values.term_id),classRow=(state.boot.classes||[]).find(item=>item.id===values.class_id);
+    if(!term||!classRow){toast("Package not created","Select a valid class and term.","error");return}
+    const button=byId("bulkPublishedReportsRun"),cancel=byId("bulkPublishedReportsCancel"),progress=byId("bulkPublishedReportsProgress"),progressText=byId("bulkPublishedReportsProgressText");
+    state.bulkReportPackageBusy=true;button.disabled=true;cancel.disabled=true;progress.classList.remove("hidden");
+    try{
+      progressText.textContent="Loading published reports";
+      const rows=await listAllPublishedReportsForClass(term.id,classRow.id);
+      if(!rows.length)throw new Error("No published report cards are available for this class and term, or your role is not assigned to them.");
+      const zip=new window.JSZip(),folderName=safeArchiveSegment(`${classRow.name}_${term.name}`,"Published_Reports"),folder=zip.folder(folderName);
+      const manifest=[];let completed=0,failed=0,storedRefreshes=0,fallbackDownloads=0;
+      for(const row of rows){
+        completed+=1;progressText.textContent=`Preparing ${completed} of ${rows.length}: ${row.student_name||row.report_number||"report"}`;
+        try{
+          const editor=await rpc("get_report_editor",{target_report_id:row.id,target_enrollment_id:null,target_term_id:null});
+          const publication=(editor.publications||[]).find(item=>!item.revoked_at);
+          if(!publication)throw new Error("Active publication record not found");
+          let pdf,storageStatus="refreshed";
+          try{
+            const generated=await createAndStoreOfficialPdf(editor,publication);pdf=generated.pdf;storedRefreshes+=1;
+          }catch(storageError){
+            pdf=await createReportPdf(editor,publication);storageStatus="downloaded_latest_not_stored";fallbackDownloads+=1;
+            await reportClientError(storageError,{source:"bulk_class_pdf_storage_refresh",report_id:row.id,class_id:classRow.id,term_id:term.id});
+          }
+          const studentName=editor.student?.full_name||row.student_name||"Student",admission=editor.student?.admission_no||row.admission_no||"";
+          const reportNumber=editor.report?.report_number||row.report_number||row.id;
+          const filename=`${safeArchiveSegment(reportNumber,"Report")}_${safeArchiveSegment(admission,"Admission")}_${safeArchiveSegment(studentName,"Student")}.pdf`;
+          folder.file(filename,pdf);
+          manifest.push({report_number:reportNumber,student_name:studentName,admission_no:admission,class_name:classRow.name,term_name:term.name,status:"included",storage_refresh:storageStatus,file_name:filename,error:""});
+        }catch(error){
+          failed+=1;manifest.push({report_number:row.report_number||"",student_name:row.student_name||"",admission_no:row.admission_no||"",class_name:classRow.name,term_name:term.name,status:"failed",storage_refresh:"not_attempted",file_name:"",error:friendlyError(error)});
+          await reportClientError(error,{source:"bulk_class_pdf_download",report_id:row.id,class_id:classRow.id,term_id:term.id});
+        }
+      }
+      const included=manifest.filter(item=>item.status==="included");
+      if(!included.length)throw new Error("None of the published reports could be generated. Review the report and Storage configuration, then try again.");
+      const headers=["report_number","student_name","admission_no","class_name","term_name","status","storage_refresh","file_name","error"];
+      zip.file("BULK_DOWNLOAD_MANIFEST.csv",[headers.join(","),...manifest.map(item=>headers.map(key=>csvCell(item[key])).join(","))].join("\n"));
+      zip.file("README.txt",`${schoolDisplayName()} Published Report Cards\n\nClass: ${classRow.name}\nTerm: ${term.name}\nGenerated: ${new Date().toISOString()}\nReports included: ${included.length}\nFailed: ${failed}\nStored PDFs refreshed: ${storedRefreshes}\nLatest-format fallback downloads: ${fallbackDownloads}\n\nOnly reports accessible to the signed-in System Administrator or assigned teacher are included. See BULK_DOWNLOAD_MANIFEST.csv for details.\n`);
+      progressText.textContent="Compressing ZIP package";
+      const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}},metadata=>{if(progressText)progressText.textContent=`Compressing ZIP package: ${Math.round(metadata.percent)}%`});
+      const date=new Date().toISOString().slice(0,10),filename=`Published_Report_Cards_${safeArchiveSegment(classRow.name,"Class")}_${safeArchiveSegment(term.name,"Term")}_${date}.zip`;
+      downloadBlob(filename,blob);closeModal();
+      toast(failed?"Class package downloaded with warnings":"Class package downloaded",`${included.length} published report card${included.length===1?"":"s"} included${failed?` • ${failed} failed and are listed in the manifest`:""}.`,failed?"warning":"success",9000);
+    }catch(error){toast("Class package not created",friendlyError(error),"error",9000);await reportClientError(error,{source:"bulk_class_pdf_package",class_id:values.class_id,term_id:values.term_id})}
+    finally{state.bulkReportPackageBusy=false;if(button)button.disabled=false;if(cancel)cancel.disabled=false;if(progress)progress.classList.add("hidden")}
+  }
+
   async function createAndStoreOfficialPdf(editor,publication) {
     if(!editor?.report?.id||!publication||publication.revoked_at)throw new Error("Active publication record not found");
     const pdf=await createReportPdf(editor,publication);
@@ -2430,8 +2525,24 @@
     score:"#083b78",
     total:"#b00020",
     grade:"#006400",
-    position:"#b00020"
+    position:"#b00020",
+    remark:"#083b78"
   });
+
+  function reportTableLayout(ctx,subjects,columns,bodyTop,maximumTableBottom=1086) {
+    const source=Array.isArray(subjects)?subjects.filter(Boolean):[];
+    const displaySubjects=[...source,null]; // Always retain exactly one blank line box after the last subject.
+    setReportFont(ctx,20,"normal");
+    const subjectLineCounts=displaySubjects.map(subject=>subject
+      ?reportTextLines(ctx,subject.subject_name||subject.name||"",columns[1]-columns[0]-16,2).length
+      :1
+    );
+    const weights=subjectLineCounts.map(lines=>lines>1?1.34:1);
+    const preferredRowUnit=56,maximumHeight=Math.max(preferredRowUnit,maximumTableBottom-bodyTop);
+    const desiredHeight=Math.max(preferredRowUnit,weights.reduce((sum,value)=>sum+value,0)*preferredRowUnit);
+    const availableHeight=Math.min(maximumHeight,desiredHeight);
+    return {displaySubjects,subjectLineCounts,weights,availableHeight,tableBottom:bodyTop+availableHeight};
+  }
 
   function reportBodyFontName() {
     const requested=String(state.boot?.school?.report_body_font||"Times New Roman");
@@ -2807,8 +2918,11 @@
     const school=state.boot.school||{},ink="#17233b",summaryPale="#eef4fb";
     const {logo,signer={},signatureImage,studentPhotoImage}=assets;
     const showStudentPhoto=!manual&&Boolean(studentPhotoImage);
-    const tableLeft=38,tableRight=1202,tableTop=338,headerHeight=58,tableBottom=1086;
+    const tableLeft=38,tableRight=1202,tableTop=338,headerHeight=58,maximumTableBottom=1086;
     const bodyTop=tableTop+headerHeight,columns=[38,286,464,646,762,862,994,1202];
+    const tableLayout=reportTableLayout(ctx,subjects,columns,bodyTop,maximumTableBottom);
+    const {displaySubjects,weights,availableHeight,tableBottom}=tableLayout;
+    const lowerOffset=tableBottom-maximumTableBottom,shift=y=>y+lowerOffset;
 
     ctx.textBaseline="alphabetic";
 
@@ -2843,22 +2957,15 @@
     // Rebuild the data region so pre-printed subject names or sample values can
     // never show through the live report.
     ctx.fillStyle="#ffffff";
-    ctx.fillRect(tableLeft+1,bodyTop+1,tableRight-tableLeft-2,tableBottom-bodyTop-2);
+    ctx.fillRect(tableLeft-2,bodyTop+1,tableRight-tableLeft+4,1598-bodyTop);
     if(logo){
+      const watermarkHeight=Math.min(390,Math.max(120,tableBottom-bodyTop-28));
       ctx.save();ctx.globalAlpha=.065;
-      drawImageContain(ctx,logo,420,548,400,430);
+      drawImageContain(ctx,logo,420,bodyTop+(tableBottom-bodyTop-watermarkHeight)/2,400,watermarkHeight);
       ctx.restore();
     }
 
-    const minimumRows=12,rowCount=Math.max(minimumRows,subjects.length);
-    const displaySubjects=Array.from({length:rowCount},(_,index)=>subjects[index]||null);
-    setReportFont(ctx,20,"normal");
-    const subjectWidths=displaySubjects.map(subject=>subject
-      ?reportTextLines(ctx,subject.subject_name||subject.name||"",columns[1]-columns[0]-16,2).length
-      :1
-    );
-    const weights=subjectWidths.map(lines=>lines>1?1.34:1);
-    const availableHeight=tableBottom-bodyTop,weightTotal=weights.reduce((sum,value)=>sum+value,0);
+    const weightTotal=weights.reduce((sum,value)=>sum+value,0);
     let rowY=bodyTop;
     const ranks=manual?new Map():await reportSubjectPositionMap(report.id);
 
@@ -2899,14 +3006,13 @@
           align:"center",preferredSize:18,minimumSize:12,weight:"bold",colour:REPORT_RESULT_COLOURS.position
         });
         drawReportCellText(ctx,manual?"":subject.remark||"",columns[6],columns[7],(rowY+nextY)/2,{
-          preferredSize:18,minimumSize:11,colour:ink
+          preferredSize:18,minimumSize:11,colour:REPORT_RESULT_COLOURS.remark
         });
       }
       rowY=nextY;
     });
 
-    // Rebuild the summary and signing area to prevent ghost text, old QR codes
-    // and an old embedded Principal signature from remaining in the template.
+    // Rebuild the summary and signing area immediately after the final blank table row.
     ctx.fillStyle=summaryPale;
     ctx.fillRect(tableLeft,tableBottom,tableRight-tableLeft,109);
     const average=manual?"":subjects.length
@@ -2919,71 +3025,68 @@
         :{position:0,class_size:0};
 
     ctx.fillStyle=ink;setReportFont(ctx,20,"bold");
-    ctx.fillText(`Average: ${manual?"......":`${number(average,1)}%`}`,47,1118);
-    drawCenteredReportText(ctx,`Attendance: ${manual?".... / ....":`${report.days_present||0} / ${report.days_school_opened||0}`}`,365,850,1118);
-    drawRightReportText(ctx,`Overall Position: ${manual?"..../....":position.position?`${position.position} / ${position.class_size}`:".... / ...."}`,1194,1118);
-    ctx.fillText(`Attitude: ${manual?".................................":report.attitude||""}`,47,1175);
-    drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,1175);
-    drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,1175);
-
-    ctx.fillStyle="#ffffff";
-    ctx.fillRect(tableLeft,1195,tableRight-tableLeft,403);
+    ctx.fillText(`Average: ${manual?"......":`${number(average,1)}%`}`,47,shift(1118));
+    drawCenteredReportText(ctx,`Attendance: ${manual?".... / ....":`${report.days_present||0} / ${report.days_school_opened||0}`}`,365,850,shift(1118));
+    drawRightReportText(ctx,`Overall Position: ${manual?"..../....":position.position?`${position.position} / ${position.class_size}`:".... / ...."}`,1194,shift(1118));
+    ctx.fillText(`Attitude: ${manual?".................................":report.attitude||""}`,47,shift(1175));
+    drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,shift(1175));
+    drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,shift(1175));
 
     ctx.fillStyle=ink;setReportFont(ctx,20,"bold");
-    ctx.fillText("Class Teacher's Comment",43,1219);
-    [1249,1278,1307].forEach(y=>drawReportDottedLine(ctx,43,850,y));
+    ctx.fillText("Class Teacher's Comment",43,shift(1219));
+    [1249,1278,1307].forEach(y=>drawReportDottedLine(ctx,43,850,shift(y)));
     setReportFont(ctx,17,"normal");
     if(!manual){
       const teacherLines=reportTextLines(ctx,report.teacher_comment||"",790,3);
-      [1245,1274,1303].forEach((y,index)=>{if(teacherLines[index])ctx.fillText(teacherLines[index],47,y)});
+      [1245,1274,1303].forEach((y,index)=>{if(teacherLines[index])ctx.fillText(teacherLines[index],47,shift(y))});
     }
 
-    setReportFont(ctx,20,"bold");ctx.fillText("Principal's Comment",43,1327);
-    [1357,1386].forEach(y=>drawReportDottedLine(ctx,43,650,y));
+    setReportFont(ctx,20,"bold");ctx.fillText("Principal's Comment",43,shift(1327));
+    [1357,1386].forEach(y=>drawReportDottedLine(ctx,43,650,shift(y)));
     setReportFont(ctx,17,"normal");
     if(!manual){
       const principalLines=reportTextLines(ctx,report.head_comment||"",590,2);
-      [1353,1382].forEach((y,index)=>{if(principalLines[index])ctx.fillText(principalLines[index],47,y)});
+      [1353,1382].forEach((y,index)=>{if(principalLines[index])ctx.fillText(principalLines[index],47,shift(y))});
     }
 
     const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
     setReportFont(ctx,20,"bold");
-    ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,1422);
+    ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,shift(1422));
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
     const qr=await qrCanvas(qrText);
-    if(qr)ctx.drawImage(qr,949,1210,190,190);
+    if(qr)ctx.drawImage(qr,949,shift(1210),190,190);
 
     const verificationCode=reportVerificationCode(report,templateMeta,manual);
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
     const verificationText=`Verification: ${verificationCode}`;
     if(ctx.measureText(verificationText).width<=290){
-      drawCenteredReportText(ctx,verificationText,900,1190,1430);
+      drawCenteredReportText(ctx,verificationText,900,1190,shift(1430));
     }else{
       const splitAt=verificationCode.lastIndexOf("-");
       const first=splitAt>0?`Verification: ${verificationCode.slice(0,splitAt+1)}`:"Verification:";
       const second=splitAt>0?verificationCode.slice(splitAt+1):verificationCode;
-      drawCenteredReportText(ctx,first,900,1190,1424);
-      drawCenteredReportText(ctx,second,900,1190,1447);
+      drawCenteredReportText(ctx,first,900,1190,shift(1424));
+      drawCenteredReportText(ctx,second,900,1190,shift(1447));
     }
 
-    const signatureLeft=515,signatureRight=865,signatureTop=1370;
+    const signatureLeft=515,signatureRight=865,signatureTop=shift(1370);
     if(signatureImage)drawImageContain(ctx,signatureImage,555,signatureTop,270,100);
     ctx.strokeStyle="#5f708b";ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(signatureLeft,1485);ctx.lineTo(signatureRight,1485);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(signatureLeft,shift(1485));ctx.lineTo(signatureRight,shift(1485));ctx.stroke();
     ctx.fillStyle=ink;setReportFont(ctx,18,"bold");
-    drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,1512);
+    drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,shift(1512));
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
-    drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,1538);
+    drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,shift(1538));
 
     const reportCode=reportVerificationCode(report,templateMeta,manual);
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
-    ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,43,1572);
+    ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,43,shift(1572));
     const manualYear=(String(templateMeta.academicYearName||"").match(/\d{4}\s*$/)||[])[0]||String(new Date().getFullYear());
     drawRightReportText(ctx,manual
       ?`Date Issued: .../.../${manualYear}`
-      :`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1197,1572);
+      :`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1197,shift(1572));
 
     return canvas;
   }
@@ -3036,13 +3139,18 @@
     drawInlineReportField(ctx,{label:"Academic Year:",value:identityYear,x:620,y:323,maxWidth:410,align:"center",fontSize:19});
     drawInlineReportField(ctx,{label:"Term:",value:identityTerm,x:1197,y:323,maxWidth:300,align:"right",fontSize:19});
 
-    const tableLeft=38,tableRight=1202,tableTop=338,headerHeight=58,tableBottom=1086;
+    const tableLeft=38,tableRight=1202,tableTop=338,headerHeight=58,maximumTableBottom=1086;
     const columns=[38,286,464,646,762,862,994,1202];
     const labels=["SUBJECT","CLASS SCORE","EXAMS SCORE","TOTAL","GRADE","POSITION","REMARKS"];
-    const minimumRows=12,rowCount=Math.max(minimumRows,subjects.length),displaySubjects=Array.from({length:rowCount},(_,index)=>subjects[index]||null);
+    const bodyTop=tableTop+headerHeight,tableLayout=reportTableLayout(ctx,subjects,columns,bodyTop,maximumTableBottom);
+    const {displaySubjects,weights,availableHeight,tableBottom}=tableLayout;
+    const lowerOffset=tableBottom-maximumTableBottom,shift=y=>y+lowerOffset;
 
-    // Watermark remains behind the table only.
-    if(logo){ctx.save();ctx.globalAlpha=.065;drawImageContain(ctx,logo,420,548,400,430);ctx.restore()}
+    // Watermark remains behind the compact subject table only.
+    if(logo){
+      const watermarkHeight=Math.min(390,Math.max(120,tableBottom-bodyTop-28));
+      ctx.save();ctx.globalAlpha=.065;drawImageContain(ctx,logo,420,bodyTop+(tableBottom-bodyTop-watermarkHeight)/2,400,watermarkHeight);ctx.restore();
+    }
 
     ctx.fillStyle=headerPale;ctx.fillRect(tableLeft,tableTop,tableRight-tableLeft,headerHeight);
     ctx.strokeStyle="#1d1d1d";ctx.lineWidth=1.25;ctx.strokeRect(tableLeft,tableTop,tableRight-tableLeft,tableBottom-tableTop);
@@ -3052,10 +3160,8 @@
     ctx.textBaseline="alphabetic";
 
     setReportFont(ctx,20,"normal");
-    const subjectWidths=displaySubjects.map(subject=>subject?reportTextLines(ctx,subject.subject_name||subject.name||"",columns[1]-columns[0]-16,2).length:1);
-    const weights=subjectWidths.map(lines=>lines>1?1.34:1);
-    const availableHeight=tableBottom-(tableTop+headerHeight),weightTotal=weights.reduce((sum,value)=>sum+value,0);
-    let rowY=tableTop+headerHeight;
+    const weightTotal=weights.reduce((sum,value)=>sum+value,0);
+    let rowY=bodyTop;
     const ranks=manual?new Map():await reportSubjectPositionMap(report.id);
     displaySubjects.forEach((subject,index)=>{
       const rowHeight=index===displaySubjects.length-1?tableBottom-rowY:availableHeight*(weights[index]/weightTotal);
@@ -3071,70 +3177,69 @@
         drawReportCellText(ctx,score(breakdown.total),columns[3],columns[4],(rowY+nextY)/2,{align:"center",preferredSize:19,minimumSize:13,weight:"bold",colour:REPORT_RESULT_COLOURS.total});
         drawReportCellText(ctx,manual?"":subject.grade||"",columns[4],columns[5],(rowY+nextY)/2,{align:"center",preferredSize:19,minimumSize:13,weight:"bold",colour:REPORT_RESULT_COLOURS.grade});
         drawReportCellText(ctx,manual?"":ranks.get(subject.subject_id)||"",columns[5],columns[6],(rowY+nextY)/2,{align:"center",preferredSize:18,minimumSize:12,weight:"bold",colour:REPORT_RESULT_COLOURS.position});
-        drawReportCellText(ctx,manual?"":subject.remark||"",columns[6],columns[7],(rowY+nextY)/2,{preferredSize:18,minimumSize:11,colour:ink});
+        drawReportCellText(ctx,manual?"":subject.remark||"",columns[6],columns[7],(rowY+nextY)/2,{preferredSize:18,minimumSize:11,colour:REPORT_RESULT_COLOURS.remark});
       }
       rowY=nextY;
     });
 
-    // Summary fields.
+    // Summary and signing fields follow immediately after the single retained blank row.
     ctx.fillStyle=summaryPale;ctx.fillRect(tableLeft,tableBottom,tableRight-tableLeft,109);
     const average=manual?"":subjects.length?subjects.reduce((sum,item)=>sum+Number(item.total_score||0),0)/subjects.length:0;
     const position=manual?{position:0,class_size:0}:report.id
       ?await rpc("report_position",{target_report_id:report.id}).catch(()=>({position:0,class_size:0}))
       :{position:0,class_size:0};
     ctx.fillStyle=ink;setReportFont(ctx,20,"bold");
-    ctx.fillText(`Average: ${manual?"......":`${number(average,1)}%`}`,47,1118);
-    drawCenteredReportText(ctx,`Attendance: ${manual?".... / ....":`${report.days_present||0} / ${report.days_school_opened||0}`}`,365,850,1118);
-    drawRightReportText(ctx,`Overall Position: ${manual?"..../....":position.position?`${position.position} / ${position.class_size}`:".... / ...."}`,1194,1118);
-    ctx.fillText(`Attitude: ${manual?".................................":report.attitude||""}`,47,1175);
-    drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,1175);
-    drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,1175);
+    ctx.fillText(`Average: ${manual?"......":`${number(average,1)}%`}`,47,shift(1118));
+    drawCenteredReportText(ctx,`Attendance: ${manual?".... / ....":`${report.days_present||0} / ${report.days_school_opened||0}`}`,365,850,shift(1118));
+    drawRightReportText(ctx,`Overall Position: ${manual?"..../....":position.position?`${position.position} / ${position.class_size}`:".... / ...."}`,1194,shift(1118));
+    ctx.fillText(`Attitude: ${manual?".................................":report.attitude||""}`,47,shift(1175));
+    drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,shift(1175));
+    drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,shift(1175));
 
-    // Comments, promotion, signature, and verification.
-    ctx.fillStyle=ink;setReportFont(ctx,20,"bold");ctx.fillText("Class Teacher's Comment",43,1219);
-    [1249,1278,1307].forEach(y=>drawReportDottedLine(ctx,43,850,y));
+    ctx.fillStyle=ink;setReportFont(ctx,20,"bold");ctx.fillText("Class Teacher's Comment",43,shift(1219));
+    [1249,1278,1307].forEach(y=>drawReportDottedLine(ctx,43,850,shift(y)));
     setReportFont(ctx,17,"normal");ctx.fillStyle=ink;
     if(!manual){
       const lines=reportTextLines(ctx,report.teacher_comment||"",790,3);
-      [1245,1274,1303].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],47,y)});
+      [1245,1274,1303].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],47,shift(y))});
     }
-    setReportFont(ctx,20,"bold");ctx.fillText("Principal's Comment",43,1327);
-    [1357,1386].forEach(y=>drawReportDottedLine(ctx,43,650,y));
+    setReportFont(ctx,20,"bold");ctx.fillText("Principal's Comment",43,shift(1327));
+    [1357,1386].forEach(y=>drawReportDottedLine(ctx,43,650,shift(y)));
     setReportFont(ctx,17,"normal");
     if(!manual){
       const lines=reportTextLines(ctx,report.head_comment||"",590,2);
-      [1353,1382].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],47,y)});
+      [1353,1382].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],47,shift(y))});
     }
     const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
-    setReportFont(ctx,20,"bold");ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,1422);
+    setReportFont(ctx,20,"bold");ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,shift(1422));
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
     const qr=await qrCanvas(qrText);
-    if(qr)ctx.drawImage(qr,949,1210,190,190);
+    if(qr)ctx.drawImage(qr,949,shift(1210),190,190);
     const verificationCode=reportVerificationCode(report,templateMeta,manual);
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
     const verificationText=`Verification: ${verificationCode}`;
-    if(ctx.measureText(verificationText).width<=290)drawCenteredReportText(ctx,verificationText,900,1190,1430);
+    if(ctx.measureText(verificationText).width<=290)drawCenteredReportText(ctx,verificationText,900,1190,shift(1430));
     else{
       const splitAt=verificationCode.lastIndexOf("-");
       const first=splitAt>0?`Verification: ${verificationCode.slice(0,splitAt+1)}`:"Verification:";
       const second=splitAt>0?verificationCode.slice(splitAt+1):verificationCode;
-      drawCenteredReportText(ctx,first,900,1190,1424);
-      drawCenteredReportText(ctx,second,900,1190,1447);
+      drawCenteredReportText(ctx,first,900,1190,shift(1424));
+      drawCenteredReportText(ctx,second,900,1190,shift(1447));
     }
 
-    const signatureLeft=515,signatureRight=865,signatureTop=1370;
+    const signatureLeft=515,signatureRight=865,signatureTop=shift(1370);
     if(signatureImage)drawImageContain(ctx,signatureImage,555,signatureTop,270,100);
-    ctx.strokeStyle="#5f708b";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(signatureLeft,1485);ctx.lineTo(signatureRight,1485);ctx.stroke();
-    ctx.fillStyle=ink;setReportFont(ctx,18,"bold");drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,1512);
-    ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,1538);
+    ctx.strokeStyle="#5f708b";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(signatureLeft,shift(1485));ctx.lineTo(signatureRight,shift(1485));ctx.stroke();
+    ctx.fillStyle=ink;setReportFont(ctx,18,"bold");drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,shift(1512));
+    ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,shift(1538));
 
     const reportCode=reportVerificationCode(report,templateMeta,manual);
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
-    ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,43,1572);
+    ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,43,shift(1572));
     const manualYear=(String(templateMeta.academicYearName||"").match(/\d{4}\s*$/)||[])[0]||String(new Date().getFullYear());
-    drawRightReportText(ctx,manual?`Date Issued: .../.../${manualYear}`:`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1197,1572);
+    drawRightReportText(ctx,manual?`Date Issued: .../.../${manualYear}`:`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1197,shift(1572));
     ctx.fillStyle=accent;ctx.fillRect(38,1603,1164,7);
     ctx.fillStyle="#111111";setReportFont(ctx,17,"bold","italic");
     drawCenteredReportText(ctx,"N.B.: Any Alteration, Cancellation or Erasing of any part of this report renders it void",38,1202,1654);
@@ -4019,7 +4124,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.7.3 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.7.4 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4059,7 +4164,8 @@
     "tools/backup-decryptor.html","tools/vendor/jszip-3.10.1.min.js",
     "README_FIRST_FRESH_INSTALL.txt","QUICK_INSTALL_CHECKLIST.txt","SCHEMA_SEQUENCE_POLICY.txt","PROJECT_MANIFEST.json",
     "COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md","FINAL_BACKUP_AND_RESTORE_RUNBOOK.md",
-    "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","RELEASE_NOTES_6_7_3_COMPACT_SCROLL_LISTS.txt","UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt","Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt"
+    "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","RELEASE_NOTES_6_7_3_COMPACT_SCROLL_LISTS.txt","UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt","Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt"
   ]);
   const PACKAGE_LOGO_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
@@ -4140,14 +4246,14 @@
       .replace(/window\.NIS_CONFIG\?\.logoPath \|\| "[^"]*"/,'window.NIS_CONFIG?.logoPath || "assets/school-logo.png"');
   }
   function generatorConfigText(identity) {
-    return `// Generated by Report Card Enterprise v6.7.3 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
+    return `// Generated by Report Card Enterprise v6.7.4 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
   }
   function generatorIdentitySql(identity) {
     return `-- ${identity.schoolName} identity bootstrap\n-- Run after 05_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
   }
   function generatorReadme(identity) {
     const configured=Boolean(identity.supabaseUrl&&identity.supabaseKey);
-    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.7.3 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the seven SQL files in order, from 01_schema_foundation.sql through 05_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
+    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.7.4 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the seven SQL files in order, from 01_schema_foundation.sql through 05_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
   }
   function generatedIndexHtml(baseHtml,identity) {
     const safeName=esc(identity.schoolName);
@@ -4159,7 +4265,7 @@
       .replace(/<title>[\s\S]*?<\/title>/i,`<title>${safeName} | Report Cards</title>`);
   }
   function generatedServiceWorker(identity) {
-    const cache=`report-card-${slugify(identity.schoolName)}-v6-7-3-r1`;
+    const cache=`report-card-${slugify(identity.schoolName)}-v6-7-4-r1`;
     return `const CACHE_NAME=${JSON.stringify(cache)};\nconst STATIC_ASSETS=[\n  "./","index.html","style.css","app.js","config.js","manifest.webmanifest",\n  "assets/school-logo.png","assets/approved-terminal-report-template.png",\n  "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",\n  "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",\n  "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",\n  "assets/vendor/html2canvas-1.4.1.min.js"\n];\nself.addEventListener("install",event=>event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(STATIC_ASSETS)).then(()=>self.skipWaiting())));\nself.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));\nself.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.hostname.endsWith(".supabase.co")){event.respondWith(fetch(request).catch(()=>new Response(JSON.stringify({message:"offline"}),{status:503,headers:{"Content-Type":"application/json"}})));return;}if(url.pathname.endsWith("/config.js")){event.respondWith(fetch(request,{cache:"no-store"}).then(response=>{if(response.ok){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;}).catch(()=>caches.match(request)));return;}if(request.mode==="navigate"){event.respondWith(fetch(request).then(response=>{const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put("index.html",clone));return response;}).catch(()=>caches.match("index.html")));return;}event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{if(response.ok&&url.origin===self.location.origin){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;})));});\nself.addEventListener("sync",event=>{if(event.tag==="nis-outbox")event.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:"FLUSH_OUTBOX"}))));});\nself.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});\n`;
   }
   function generatedManifest(identity) {
@@ -4219,7 +4325,7 @@
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
       progressText.textContent="Converting school logo";const logoBlob=await packageLogoPng(byId("schoolPackageLogo").files?.[0]);
-      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.7.3`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
+      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.7.4`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
       progressText.textContent="Loading application files";
       const textFiles={};
       for(const path of REUSABLE_FRONTEND_TEXT_FILES)textFiles[path]=await fetchPackageFile(path,false);
@@ -4231,8 +4337,8 @@
       for(const path of REUSABLE_FRONTEND_BINARY_FILES){completed+=1;progressText.textContent=`Copying frontend assets ${completed}/${total}`;zip.file(`${frontend}/${path}`,await fetchPackageFile(path,true));}
       for(const path of REUSABLE_PACKAGE_SOURCE_FILES){completed+=1;progressText.textContent=`Copying Supabase and recovery files ${completed}/${total}`;const data=await fetchPackageFile(`package-source/${path}`,true);zip.file(`${root}/${path}`,data);zip.file(`${frontend}/package-source/${path}`,data);}
       zip.file(`${root}/SCHOOL_IDENTITY_SETUP.sql`,generatorIdentitySql(identity));zip.file(`${root}/GENERATED_PACKAGE_README.md`,generatorReadme(identity));
-      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.7.3",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
-      progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_3_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
+      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.7.4",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
+      progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_4_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
       toast("Reusable school package generated",emailDomainProvided?`${filename} is ready for the new school's separate Supabase and GitHub deployment.`:`${filename} is ready. A safe .invalid email-domain placeholder was added and can be changed later in Settings.`,"success",9000);setSync("online","Synced");
     } catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"reusable_school_package_generator"})}
     finally{state.packageGeneratorBusy=false;button.disabled=false;progress.classList.add("hidden")}

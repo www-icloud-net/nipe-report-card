@@ -1,8 +1,8 @@
 {
   "product": "Report Card Enterprise",
-  "version": "6.7.3 Reusable Schools Edition",
+  "version": "6.7.4 Reusable Schools Edition",
   "release_date": "2026-07-20",
-  "baseline": "Confirmed working v6.7.2 Reusable Schools Edition",
+  "baseline": "Confirmed working v6.7.3 Reusable Schools Edition",
   "edition": "Reusable Schools, Supabase Dashboard and GitHub Pages Edition",
   "database_files": [
     "01_schema_foundation.sql",
@@ -83,7 +83,11 @@
     "Optional reusable-package email domain with safe school-specific .invalid fallback",
     "Bounded vertical scrolling with sticky table headings for operational directories and long report lists",
     "Compact scrollable student list for New Report Card selection",
-    "Responsive list-height controls that prevent long pages on desktop and mobile"
+    "Responsive list-height controls that prevent long pages on desktop and mobile",
+    "Deep-blue remarks in official and manual report-card rendering",
+    "Adaptive subject table that retains exactly one blank line box after the final subject",
+    "Class-and-term bulk ZIP download of latest published report PDFs for System Administrators and assigned teachers",
+    "Bulk package manifest, per-report error isolation, and current-format regeneration before download"
   ],
   "frontend_root": [
     "index.html",
@@ -115,10 +119,13 @@
     "Report_Card_Enterprise_v6_7_2_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_7_3_COMPACT_SCROLL_LISTS.txt",
     "UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt",
-    "Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt"
+    "Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt",
+    "UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt",
+    "Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt"
   ],
   "verification_scope": {
-    "package_level": "Static syntax, frontend parity, scroll-container behavior, new-report list interaction, SQL-file preservation, checksum and archive tests",
+    "package_level": "Static syntax, frontend parity, adaptive report-row behavior, deep-blue remark rendering, bulk package workflow, SQL-file preservation, checksum and archive tests",
     "not_available_in_build_environment": "Live Supabase SQL execution, production RLS acceptance, Edge runtime duration tests and real-role browser acceptance",
     "required_after_deployment": "Complete the acceptance procedures in the setup and upgrade guides"
   },
