@@ -1,12 +1,14 @@
-REPORT CARD ENTERPRISE v6.7.2 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.7.3 REUSABLE SCHOOLS EDITION
 FRESH COMPLETE PACKAGE
 
 CURRENT STATUS
-- Built from the confirmed working v6.7.0 Final Build.
+- Built from the confirmed working v6.7.2 Reusable Schools Edition.
 - Adds a System Administrator GitHub Navigator immediately after Settings.
 - Generates a separate complete fresh package for another school using that school's name, logo, report prefix, optional email domain, and GitHub repository identity.
 - Package generation does not alter the current school's data or configuration.
-- Database upgrades continue in 05_schema.sql. No 06_schema.sql is required.
+- Adds bounded vertical scrolling to long student, teacher, principal, user-access, report-card, audit, and notification lists.
+- Adds a compact scrollable student chooser for New Report Card.
+- Database upgrades continue in 05_schema.sql. No SQL change or 06_schema.sql is required for this frontend release.
 
 THIS PACKAGE INCLUDES
 - Complete frontend and GitHub Pages deployment folder.
@@ -39,6 +41,6 @@ IMPORTANT
 
 START HERE
 Read COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.
-For an existing v6.7.0 installation, read UPGRADE_FROM_V6_7_0_TO_V6_7_1_REUSABLE.txt.
+For an existing v6.7.2 installation, read UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt.
 For package generation, read REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md.
 For continuity and recovery, read FINAL_BACKUP_AND_RESTORE_RUNBOOK.md.

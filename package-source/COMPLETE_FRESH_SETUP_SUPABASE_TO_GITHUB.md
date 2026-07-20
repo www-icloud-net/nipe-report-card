@@ -1,4 +1,4 @@
-# Report Card Enterprise v6.7.2 Reusable Schools Edition
+# Report Card Enterprise v6.7.3 Reusable Schools Edition
 
 ## Complete Fresh Setup: Supabase Dashboard to GitHub Pages
 
@@ -262,7 +262,7 @@ As System Administrator:
 
 ## 17. Final role acceptance
 
-Test System Administrator, Principal, Class Teacher, Subject Teacher and Parent or Guardian access. Verify score entry, comments, approval, publication, withdrawal, republication, deletion, PDF regeneration, QR verification, student photographs, signatures, templates, ranking and promotion.
+Test System Administrator, Principal, Class Teacher, Subject Teacher and Parent or Guardian access. Verify score entry, comments, approval, publication, withdrawal, republication, deletion, PDF regeneration, QR verification, student photographs, signatures, templates, ranking and promotion. Also verify that Students, Teachers, Users and Access, Report Cards, Notifications and Audit Trail remain compact and scroll vertically when they contain long lists. Open **New report**, choose a class, and confirm that the student chooser scrolls within a fixed-height list.
 
 The included validation report documents package-level checks. Live Supabase and browser acceptance remains required because production credentials and data are not available inside the package-build environment.
 
