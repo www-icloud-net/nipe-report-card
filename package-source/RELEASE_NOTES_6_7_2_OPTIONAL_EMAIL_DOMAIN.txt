@@ -1,0 +1,11 @@
+REPORT CARD ENTERPRISE v6.7.2 REUSABLE SCHOOLS EDITION
+
+OPTIONAL USER EMAIL DOMAIN UPDATE
+
+1. The GitHub Navigator package generator no longer requires a user-account email domain.
+2. When a valid domain is supplied, it is used exactly as entered.
+3. When the field is blank, the generator creates a safe, non-deliverable domain ending in .invalid, based on the new school name.
+4. The generated placeholder satisfies database and account-generation requirements without pretending that the school owns a real email domain.
+5. The new school's System Administrator can replace the placeholder later under Settings before enabling real email delivery.
+6. Invalid non-empty values are still rejected. Enter only a domain, not a complete email address.
+7. No database or Edge Function change is required.

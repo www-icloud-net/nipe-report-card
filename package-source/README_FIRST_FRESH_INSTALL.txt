@@ -1,10 +1,10 @@
-REPORT CARD ENTERPRISE v6.7.1 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.7.2 REUSABLE SCHOOLS EDITION
 FRESH COMPLETE PACKAGE
 
 CURRENT STATUS
 - Built from the confirmed working v6.7.0 Final Build.
 - Adds a System Administrator GitHub Navigator immediately after Settings.
-- Generates a separate complete fresh package for another school using that school's name, logo, report prefix, email domain, and GitHub repository identity.
+- Generates a separate complete fresh package for another school using that school's name, logo, report prefix, optional email domain, and GitHub repository identity.
 - Package generation does not alter the current school's data or configuration.
 - Database upgrades continue in 05_schema.sql. No 06_schema.sql is required.
 

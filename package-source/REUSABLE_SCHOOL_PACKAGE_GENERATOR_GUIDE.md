@@ -42,3 +42,8 @@ The generator rejects Supabase Secret keys and service-role keys. Never enter da
 6. Upload the contents of `GITHUB_PAGES_FRONTEND` to a new GitHub repository.
 7. Enable GitHub Pages and configure the final URL in Supabase Authentication URL settings.
 8. Create the intended System Administrator as the first Auth user.
+
+
+## Optional user-account email domain
+
+The email-domain field may be left blank. In that case, the generator assigns a safe school-specific placeholder ending in `.invalid`. This placeholder supports account generation but cannot receive email. Replace it later under **Settings → School Identity → User email domain** before relying on invitation, recovery, or notification email delivery. Enter only a domain such as `school.edu.gh`, not a complete email address.

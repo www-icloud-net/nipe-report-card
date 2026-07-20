@@ -1,8 +1,8 @@
 {
   "product": "Report Card Enterprise",
-  "version": "6.7.1 Reusable Schools Edition",
-  "release_date": "2026-07-19",
-  "baseline": "Confirmed working v6.7.0 Final Build",
+  "version": "6.7.2 Reusable Schools Edition",
+  "release_date": "2026-07-20",
+  "baseline": "Confirmed working v6.7.1 Reusable Schools Edition",
   "edition": "Reusable Schools, Supabase Dashboard and GitHub Pages Edition",
   "database_files": [
     "01_schema_foundation.sql",
@@ -79,7 +79,8 @@
     "New permanent 05_schema.sql continuation file",
     "System Administrator GitHub Navigator and reusable school package generator",
     "Generated school identity across login, MFA, sidebar, verification, reports, manifest and icons",
-    "Configurable user-account email domain in school settings"
+    "Configurable user-account email domain in school settings",
+    "Optional reusable-package email domain with safe school-specific .invalid fallback"
   ],
   "frontend_root": [
     "index.html",
@@ -105,8 +106,10 @@
     "RELEASE_NOTES_6_7_1_REUSABLE_SCHOOLS.txt",
     "UPGRADE_FROM_V6_7_0_TO_V6_7_1_REUSABLE.txt",
     "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md",
-    "Report_Card_Enterprise_v6_7_1_VALIDATION_REPORT.txt",
-    "SHA256SUMS.txt"
+    "SHA256SUMS.txt",
+    "RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt",
+    "UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt",
+    "Report_Card_Enterprise_v6_7_2_VALIDATION_REPORT.txt"
   ],
   "verification_scope": {
     "package_level": "Static syntax, SQL parsing, file parity, dependency, backup coverage, governance, checksum and archive tests",
@@ -128,8 +131,9 @@
       "school logo",
       "short application name",
       "report-number prefix",
-      "user-account email domain"
+      "optional user-account email domain"
     ],
-    "security": "Rejects Supabase Secret and service-role keys; generation is browser-local and does not alter the current installation"
+    "security": "Rejects Supabase Secret and service-role keys; generation is browser-local and does not alter the current installation",
+    "email_domain_behavior": "Uses a supplied valid domain or generates a non-deliverable school-specific .invalid placeholder when left blank"
   }
 }

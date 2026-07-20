@@ -1,4 +1,4 @@
-# Report Card Enterprise v6.7.1 Reusable Schools Edition
+# Report Card Enterprise v6.7.2 Reusable Schools Edition
 
 ## Complete Fresh Setup: Supabase Dashboard to GitHub Pages
 
@@ -269,6 +269,6 @@ The included validation report documents package-level checks. Live Supabase and
 
 ## Reusable installation for another school
 
-After the primary system is deployed, the System Administrator can open **GitHub Navigator**, immediately after **Settings**, and generate a separate complete package for another school. The generator requires the new school name, logo, report-number prefix, user-account email domain, and repository name. It may also include the new school's browser-safe Supabase Project URL and Publishable key.
+After the primary system is deployed, the System Administrator can open **GitHub Navigator**, immediately after **Settings**, and generate a separate complete package for another school. The generator requires the new school name, logo, report-number prefix, and repository name. The user-account email domain is optional. When it is left blank, the generator inserts a safe school-specific placeholder ending in `.invalid`; replace that placeholder later under Settings before relying on email invitations, password recovery, or notification delivery. The generator may also include the new school's browser-safe Supabase Project URL and Publishable key.
 
 The generated ZIP contains its own `SCHOOL_IDENTITY_SETUP.sql`. Run that file after `05_schema.sql` in the separate Supabase project. Upload only the contents of the generated `GITHUB_PAGES_FRONTEND` folder to the new school's GitHub repository. Package generation does not modify the original school's database or branding.

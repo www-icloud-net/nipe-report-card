@@ -4004,7 +4004,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.7.1 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.7.2 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4044,7 +4044,7 @@
     "tools/backup-decryptor.html","tools/vendor/jszip-3.10.1.min.js",
     "README_FIRST_FRESH_INSTALL.txt","QUICK_INSTALL_CHECKLIST.txt","SCHEMA_SEQUENCE_POLICY.txt","PROJECT_MANIFEST.json",
     "COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md","FINAL_BACKUP_AND_RESTORE_RUNBOOK.md",
-    "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_1_REUSABLE_SCHOOLS.txt"
+    "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt"
   ]);
   const PACKAGE_LOGO_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
@@ -4070,7 +4070,7 @@
             <label class="field full"><span>New school name</span><input name="school_name" maxlength="120" placeholder="Example Academy" required></label>
             <label class="field"><span>Short application name</span><input name="short_name" maxlength="30" placeholder="Example Reports"></label>
             <label class="field"><span>Report number prefix</span><input name="report_prefix" maxlength="12" placeholder="EA" required></label>
-            <label class="field full"><span>User account email domain</span><input name="email_domain" placeholder="example.edu.gh" required><small>Used for automatically generated user accounts in the separate installation.</small></label>
+            <label class="field full"><span>User account email domain <em>(optional)</em></span><input name="email_domain" placeholder="school.edu.gh (optional)"><small>Enter only a domain, such as school.edu.gh. Leave blank to use a safe non-deliverable .invalid placeholder. It can be changed later under Settings before email delivery is enabled.</small></label>
             <label class="field full"><span>School logo</span><input id="schoolPackageLogo" name="school_logo" type="file" accept="image/png,image/jpeg,image/webp" required><small>PNG, JPEG, or WebP. Maximum 5 MB. The generator converts the image to a deployment-ready PNG.</small></label>
             <div class="package-logo-preview full"><img id="schoolPackageLogoPreview" src="${CONFIG.logoPath}" alt="Package logo preview"><div><strong id="schoolPackageNamePreview">New school package</strong><span>The generated package will use this name and logo on login, MFA, sidebar, verification, reports, manifest, and browser icons.</span></div></div>
             <label class="field full"><span>GitHub repository name</span><input name="repository_name" maxlength="80" placeholder="example-academy-report-card" required></label>
@@ -4109,6 +4109,10 @@
     return (initials||"SCH").slice(0,8);
   }
   function validEmailDomain(value) {return /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(String(value||"").trim())}
+  function generatedPlaceholderEmailDomain(schoolName) {
+    const label=slugify(schoolName,"school").slice(0,55).replace(/-+$/g,"")||"school";
+    return `${label}.invalid`;
+  }
   function sqlLiteral(value) {return `'${String(value??"").replace(/'/g,"''")}'`}
   function safeShortName(name,value) {return String(value||`${suggestedPrefix(name)} Reports`).trim().slice(0,30)||"School Reports"}
   function generatedAppJs(baseApp,identity) {
@@ -4121,14 +4125,14 @@
       .replace(/window\.NIS_CONFIG\?\.logoPath \|\| "[^"]*"/,'window.NIS_CONFIG?.logoPath || "assets/school-logo.png"');
   }
   function generatorConfigText(identity) {
-    return `// Generated by Report Card Enterprise v6.7.1 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
+    return `// Generated by Report Card Enterprise v6.7.2 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
   }
   function generatorIdentitySql(identity) {
     return `-- ${identity.schoolName} identity bootstrap\n-- Run after 05_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
   }
   function generatorReadme(identity) {
     const configured=Boolean(identity.supabaseUrl&&identity.supabaseKey);
-    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.7.1 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the seven SQL files in order, from 01_schema_foundation.sql through 05_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
+    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.7.2 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the seven SQL files in order, from 01_schema_foundation.sql through 05_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
   }
   function generatedIndexHtml(baseHtml,identity) {
     const safeName=esc(identity.schoolName);
@@ -4140,7 +4144,7 @@
       .replace(/<title>[\s\S]*?<\/title>/i,`<title>${safeName} | Report Cards</title>`);
   }
   function generatedServiceWorker(identity) {
-    const cache=`report-card-${slugify(identity.schoolName)}-v6-7-1-r1`;
+    const cache=`report-card-${slugify(identity.schoolName)}-v6-7-2-r1`;
     return `const CACHE_NAME=${JSON.stringify(cache)};\nconst STATIC_ASSETS=[\n  "./","index.html","style.css","app.js","config.js","manifest.webmanifest",\n  "assets/school-logo.png","assets/approved-terminal-report-template.png",\n  "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",\n  "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",\n  "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",\n  "assets/vendor/html2canvas-1.4.1.min.js"\n];\nself.addEventListener("install",event=>event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(STATIC_ASSETS)).then(()=>self.skipWaiting())));\nself.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));\nself.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.hostname.endsWith(".supabase.co")){event.respondWith(fetch(request).catch(()=>new Response(JSON.stringify({message:"offline"}),{status:503,headers:{"Content-Type":"application/json"}})));return;}if(url.pathname.endsWith("/config.js")){event.respondWith(fetch(request,{cache:"no-store"}).then(response=>{if(response.ok){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;}).catch(()=>caches.match(request)));return;}if(request.mode==="navigate"){event.respondWith(fetch(request).then(response=>{const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put("index.html",clone));return response;}).catch(()=>caches.match("index.html")));return;}event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{if(response.ok&&url.origin===self.location.origin){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;})));});\nself.addEventListener("sync",event=>{if(event.tag==="nis-outbox")event.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:"FLUSH_OUTBOX"}))));});\nself.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});\n`;
   }
   function generatedManifest(identity) {
@@ -4188,19 +4192,19 @@
     if(state.packageGeneratorBusy)return;
     if(!window.JSZip){toast("Package generator unavailable","The packaged ZIP library did not load.","error");return}
     const form=byId("schoolPackageForm");if(!form?.reportValidity())return;
-    const values=formObject(form),schoolName=String(values.school_name||"").trim(),shortName=safeShortName(schoolName,values.short_name),reportPrefix=String(values.report_prefix||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12),emailDomain=String(values.email_domain||"").trim().toLowerCase(),repositoryName=slugify(values.repository_name||`${schoolName}-report-card`),supabaseUrl=String(values.supabase_url||"").trim(),supabaseKey=String(values.supabase_key||"").trim();
+    const values=formObject(form),schoolName=String(values.school_name||"").trim(),shortName=safeShortName(schoolName,values.short_name),reportPrefix=String(values.report_prefix||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12),emailDomainInput=String(values.email_domain||"").trim().toLowerCase(),emailDomainProvided=Boolean(emailDomainInput),emailDomain=emailDomainInput||generatedPlaceholderEmailDomain(schoolName),repositoryName=slugify(values.repository_name||`${schoolName}-report-card`),supabaseUrl=String(values.supabase_url||"").trim(),supabaseKey=String(values.supabase_key||"").trim();
     if(schoolName.length<3){toast("Package not generated","School name must contain at least three characters.","error");return}
     if(reportPrefix.length<2){toast("Package not generated","Report number prefix must contain at least two letters or numbers.","error");return}
-    if(!validEmailDomain(emailDomain)){toast("Package not generated","Enter a valid user email domain, for example school.edu.gh.","error");return}
+    if(emailDomainProvided&&!validEmailDomain(emailDomain)){toast("Package not generated","Enter only a valid domain, for example school.edu.gh, or leave this optional field blank.","error");return}
     if(supabaseUrl&&!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(supabaseUrl)){toast("Package not generated","Supabase Project URL is invalid.","error");return}
     if(/service_role|sb_secret_/i.test(supabaseKey)){toast("Secret key rejected","Use only a browser-safe Supabase Publishable key. Never package a Secret or service-role key.","error",8000);return}
     if(supabaseKey&&!/^sb_publishable_[A-Za-z0-9._-]+$/.test(supabaseKey)&&!/^eyJ[A-Za-z0-9._-]+$/.test(supabaseKey)){toast("Package not generated","Supabase key is not a valid Publishable or legacy anon key.","error");return}
-    const identity={schoolName,shortName,reportPrefix,emailDomain,repositoryName,supabaseUrl:supabaseUrl.replace(/\/$/,""),supabaseKey};
+    const identity={schoolName,shortName,reportPrefix,emailDomain,emailDomainProvided,repositoryName,supabaseUrl:supabaseUrl.replace(/\/$/,""),supabaseKey};
     const button=byId("generateSchoolPackage"),progress=byId("packageGeneratorProgress"),progressText=byId("packageGeneratorProgressText");
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
       progressText.textContent="Converting school logo";const logoBlob=await packageLogoPng(byId("schoolPackageLogo").files?.[0]);
-      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.7.1`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
+      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.7.2`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
       progressText.textContent="Loading application files";
       const textFiles={};
       for(const path of REUSABLE_FRONTEND_TEXT_FILES)textFiles[path]=await fetchPackageFile(path,false);
@@ -4212,9 +4216,9 @@
       for(const path of REUSABLE_FRONTEND_BINARY_FILES){completed+=1;progressText.textContent=`Copying frontend assets ${completed}/${total}`;zip.file(`${frontend}/${path}`,await fetchPackageFile(path,true));}
       for(const path of REUSABLE_PACKAGE_SOURCE_FILES){completed+=1;progressText.textContent=`Copying Supabase and recovery files ${completed}/${total}`;const data=await fetchPackageFile(`package-source/${path}`,true);zip.file(`${root}/${path}`,data);zip.file(`${frontend}/package-source/${path}`,data);}
       zip.file(`${root}/SCHOOL_IDENTITY_SETUP.sql`,generatorIdentitySql(identity));zip.file(`${root}/GENERATED_PACKAGE_README.md`,generatorReadme(identity));
-      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.7.1",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
-      progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_1_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
-      toast("Reusable school package generated",`${filename} is ready for the new school's separate Supabase and GitHub deployment.`,"success",8000);setSync("online","Synced");
+      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.7.2",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
+      progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_2_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
+      toast("Reusable school package generated",emailDomainProvided?`${filename} is ready for the new school's separate Supabase and GitHub deployment.`:`${filename} is ready. A safe .invalid email-domain placeholder was added and can be changed later in Settings.`,"success",9000);setSync("online","Synced");
     } catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"reusable_school_package_generator"})}
     finally{state.packageGeneratorBusy=false;button.disabled=false;progress.classList.add("hidden")}
   }
