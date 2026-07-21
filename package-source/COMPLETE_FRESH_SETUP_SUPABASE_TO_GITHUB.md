@@ -1,4 +1,4 @@
-# Report Card Enterprise v6.7.4 Reusable Schools Edition
+# Report Card Enterprise v6.8.0 Reusable Schools Edition
 
 ## Complete Fresh Setup: Supabase Dashboard to GitHub Pages
 
@@ -130,7 +130,7 @@ order by name;
 
 Do not store `NIS_BACKUP_ENCRYPTION_KEY` in public application tables or frontend files.
 
-## 8. Run files 03A through 05
+## 8. Run files 03A through 06
 
 Run separately and in order:
 
@@ -139,12 +139,14 @@ Run separately and in order:
 3. `03B2_schema_governance_workflow_and_upgrades.sql`
 4. `04_schema.sql`
 5. `05_schema.sql`
+6. `06_schema.sql`
 
 Confirm:
 
 ```text
 04 SCHEMA: PASS
 05 SCHEMA: PASS
+06 SCHEMA: PASS
 ```
 
 Fresh installations do not run historical `SQL_HOTFIX` files.
@@ -271,4 +273,4 @@ The included validation report documents package-level checks. Live Supabase and
 
 After the primary system is deployed, the System Administrator can open **GitHub Navigator**, immediately after **Settings**, and generate a separate complete package for another school. The generator requires the new school name, logo, report-number prefix, and repository name. The user-account email domain is optional. When it is left blank, the generator inserts a safe school-specific placeholder ending in `.invalid`; replace that placeholder later under Settings before relying on email invitations, password recovery, or notification delivery. The generator may also include the new school's browser-safe Supabase Project URL and Publishable key.
 
-The generated ZIP contains its own `SCHOOL_IDENTITY_SETUP.sql`. Run that file after `05_schema.sql` in the separate Supabase project. Upload only the contents of the generated `GITHUB_PAGES_FRONTEND` folder to the new school's GitHub repository. Package generation does not modify the original school's database or branding.
+The generated ZIP contains its own `SCHOOL_IDENTITY_SETUP.sql`. Run that file after `06_schema.sql` in the separate Supabase project. Upload only the contents of the generated `GITHUB_PAGES_FRONTEND` folder to the new school's GitHub repository. Package generation does not modify the original school's database or branding.

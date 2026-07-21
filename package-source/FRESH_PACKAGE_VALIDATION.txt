@@ -1,0 +1,28 @@
+REPORT CARD ENTERPRISE v6.8.0 REUSABLE SCHOOLS EDITION
+FRESH PACKAGE VALIDATION SUMMARY
+
+Status: PACKAGE VALIDATION PASSED
+Date: 21 July 2026
+Baseline: Confirmed stable v6.7.4 Reusable Schools Edition
+
+Validated:
+- Eight SQL files parse successfully in the required order.
+- Root and GitHub Pages frontend JavaScript pass syntax checks.
+- Edge Function TypeScript copies pass syntax checks.
+- Root and deployment frontend mirrors match.
+- 06_schema.sql and scheduled-backup package copies match.
+- All 31 reusable-generator source paths are present.
+- Alphabetical person-record ordering is implemented.
+- Teacher student visibility is based on current placement and official assignments.
+- Teacher-facing class selectors contain only assigned classes.
+- Promotion activates the target class and closes the previous active placement.
+- Class-teacher-only attendance is implemented.
+- Attendance totals synchronize to report cards.
+- Future attendance dates are blocked.
+- Attendance tables use forced RLS and RPC-only access.
+- Attendance data is included in scheduled encrypted backups.
+- No symbolic links are present.
+
+Static feature assertions: 43 passed, 0 failed.
+
+Live production acceptance remains required because this package was not connected to the school's Supabase project during build validation. Use UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt for the exact acceptance procedure.

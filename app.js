@@ -42,6 +42,7 @@
   const NAV = [
     {id:"dashboard",label:"Dashboard",icon:"▦",subtitle:"Academic performance overview"},
     {id:"my_class",label:"My Class",icon:"▣",subtitle:"Assigned class, learners, and report progress",roles:["class_teacher"]},
+    {id:"attendance",label:"Attendance",icon:"✓",subtitle:"Daily class attendance and automatic term totals",roles:["class_teacher"]},
     {id:"my_subjects",label:"My Subjects",icon:"⌘",subtitle:"Assigned subjects, classes, and assessment progress",roles:["class_teacher","subject_teacher"]},
     {id:"students",label:"Students",icon:"◉",subtitle:"Student records and enrolment",roles:["system_admin","class_teacher","subject_teacher"]},
     {id:"teachers",label:"Teachers",icon:"♜",subtitle:"Teacher records and assignments",permission:"manage_teachers"},
@@ -59,7 +60,7 @@
   const ROLE_NAV_IDS = Object.freeze({
     system_admin:["dashboard","students","teachers","headteachers","academics","reports","users","notifications","audit","settings","github"],
     principal:["dashboard","reports","notifications"],
-    class_teacher:["dashboard","my_class","my_subjects","students","reports","notifications"],
+    class_teacher:["dashboard","my_class","attendance","my_subjects","students","reports","notifications"],
     subject_teacher:["dashboard","my_subjects","students","reports","notifications"],
     parent_guardian:["dashboard","children","notifications"]
   });
@@ -74,7 +75,8 @@
     passwordChangeRequired:false, userAccessEditingUserId:"",
     workspace:null, studentClassFilter:"", reportClassFilter:"", reportTemplates:null, reportTemplatesLoadedAt:0,
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
-    packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false
+    packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
+    attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -562,7 +564,7 @@
     const token=state.viewToken;
     try {
       const renderer={
-        dashboard:renderDashboard,my_class:renderMyClass,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,reports:renderReports,
+        dashboard:renderDashboard,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,reports:renderReports,
         children:renderChildren,users:renderUsers,notifications:renderNotifications,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
       }[view];
       await renderer?.(token,force);
@@ -602,13 +604,14 @@
   function handleRealtime(topic,payload) {
     state.lastSync=new Date();setSync("online","Live");
     const table=payload?.payload?.table||payload?.table||"";
-    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results"].includes(table))state.workspace=null;
+    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries"].includes(table))state.workspace=null;
     if(table==="report_card_templates"){state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear()}
     if(topic.startsWith("user:")||table==="notifications") loadNotificationCount();
     clearTimeout(handleRealtime.timer);
     handleRealtime.timer=setTimeout(()=>{
       if(state.view==="dashboard") renderDashboard(state.viewToken,true);
       else if(state.view==="students"&&(table==="students"||table==="enrollments"||topic.startsWith("student:"))) renderStudents(state.viewToken,true);
+      else if(state.view==="attendance"&&(table==="class_attendance_registers"||table==="student_attendance_entries"||table==="students"||table==="enrollments")) loadAttendanceRegister(state.viewToken);
       else if(state.view==="teachers"&&(table==="teachers"||table==="profiles"||table==="classes"||table==="class_subjects"||topic==="school:global")) renderTeachers(state.viewToken,true);
       else if(state.view==="headteachers"&&(table==="headteachers"||table==="profiles"||topic==="school:global")) renderPrincipals(state.viewToken,true);
       else if(state.view==="users"&&(table==="profiles"||table==="user_class_access"||table==="teachers"||table==="headteachers"||topic==="school:global")) renderUsers(state.viewToken,true);
@@ -725,6 +728,7 @@
     const actions=[];
     if(currentRole==="class_teacher"){
       actions.push(`<button class="button secondary" data-dashboard-view="my_class">My Class</button>`);
+      actions.push(`<button class="button secondary" data-dashboard-view="attendance">Attendance</button>`);
       actions.push(`<button class="button secondary" data-dashboard-view="my_subjects">My Subjects</button>`);
     }
     if(currentRole==="subject_teacher")actions.push(`<button class="button secondary" data-dashboard-view="my_subjects">My Subjects</button>`);
@@ -738,6 +742,17 @@
   async function loadRoleWorkspace(force=false) {
     if(force||!state.workspace)state.workspace=await rpc("get_role_workspace");
     return state.workspace||{classes:[],subjects:[]};
+  }
+  function assignedClassRowsFromWorkspace(workspace=state.workspace) {
+    const all=state.boot?.classes||[];
+    if(!["class_teacher","subject_teacher"].includes(role()))return all;
+    const ids=new Set([...(workspace?.classes||[]).map(item=>item.class_id),...(workspace?.subjects||[]).map(item=>item.class_id)]);
+    return all.filter(item=>ids.has(item.id));
+  }
+  async function visibleClassesForCurrentRole() {
+    if(!["class_teacher","subject_teacher"].includes(role()))return state.boot?.classes||[];
+    const workspace=await loadRoleWorkspace();
+    return assignedClassRowsFromWorkspace(workspace);
   }
   function workspaceProgress(done,total) {
     const safeTotal=Number(total||0),safeDone=Number(done||0);
@@ -754,6 +769,87 @@
     $$('[data-workspace-students]').forEach(button=>button.onclick=()=>{state.studentClassFilter=button.dataset.workspaceStudents;navigate("students")});
     $$('[data-workspace-reports]').forEach(button=>button.onclick=()=>{state.reportClassFilter=button.dataset.workspaceReports;navigate("reports")});
   }
+  function localDateValue(date=new Date()) {
+    const offset=date.getTimezoneOffset()*60000;
+    return new Date(date.getTime()-offset).toISOString().slice(0,10);
+  }
+  function attendanceDateForTerm(term) {
+    const today=localDateValue();
+    if(term?.start_date&&today<term.start_date)return term.start_date;
+    if(term?.end_date&&today>term.end_date)return term.end_date;
+    return today;
+  }
+  function attendanceStatusOptions(selected="present") {
+    return [["present","Present"],["absent","Absent"],["late","Late"],["excused","Excused"]]
+      .map(([value,label])=>`<option value="${value}" ${selected===value?"selected":""}>${label}</option>`).join("");
+  }
+  async function renderAttendance(token) {
+    if(role()!=="class_teacher")throw new Error("Attendance is available only to assigned class teachers");
+    const terms=state.boot.terms||[];
+    const termId=state.attendanceTermId||activeTerm()?.id||terms[0]?.id||"";
+    const term=terms.find(item=>item.id===termId)||terms[0]||null;
+    state.attendanceTermId=term?.id||"";
+    const classes=term?await rpc("list_my_attendance_classes",{target_term_id:term.id}):[];
+    if(token!==state.viewToken)return;
+    if(!classes.some(item=>item.id===state.attendanceClassId))state.attendanceClassId=classes[0]?.id||"";
+    const today=localDateValue();
+    const attendanceMaxDate=term?.end_date&&term.end_date<today?term.end_date:today;
+    if(!state.attendanceDate)state.attendanceDate=attendanceDateForTerm(term);
+    if(term?.start_date&&state.attendanceDate<term.start_date)state.attendanceDate=term.start_date;
+    if(state.attendanceDate>attendanceMaxDate)state.attendanceDate=attendanceMaxDate;
+    byId("content").innerHTML=`
+      <div class="page-head"><div><h3>Class Attendance</h3><p>Mark daily attendance for your assigned class. Term totals update report cards automatically.</p></div></div>
+      <section class="panel pad">
+        <div class="form-grid three attendance-controls">
+          <label class="field"><span>Academic term</span><select id="attendanceTerm">${optionList(terms,"id","name",state.attendanceTermId)}</select></label>
+          <label class="field"><span>Assigned class</span><select id="attendanceClass">${optionList(classes,"id","name",state.attendanceClassId,classes.length?null:"No assigned class")}</select></label>
+          <label class="field"><span>School date</span><input id="attendanceDate" type="date" value="${attr(state.attendanceDate)}" ${term?.start_date?`min="${attr(term.start_date)}"`:""} max="${attr(attendanceMaxDate)}"></label>
+        </div>
+      </section>
+      <section class="panel" id="attendanceResults"><div class="empty">Loading attendance register</div></section>`;
+    byId("attendanceTerm").onchange=()=>{state.attendanceTermId=byId("attendanceTerm").value;state.attendanceClassId="";state.attendanceDate="";renderAttendance(token)};
+    byId("attendanceClass").onchange=()=>{
+      state.attendanceClassId=byId("attendanceClass").value;
+      if(state.attendanceClassId)loadAttendanceRegister(token);
+      else byId("attendanceResults").innerHTML=`<div class="empty"><strong>Select an assigned class</strong></div>`;
+    };
+    byId("attendanceDate").onchange=()=>{state.attendanceDate=byId("attendanceDate").value;loadAttendanceRegister(token)};
+    if(state.attendanceClassId)await loadAttendanceRegister(token);
+    else byId("attendanceResults").innerHTML=`<div class="empty"><strong>No class-teacher assignment</strong><span>Ask the System Administrator to assign you as a class teacher.</span></div>`;
+  }
+  async function loadAttendanceRegister(token=state.viewToken) {
+    const root=byId("attendanceResults");if(!root||!state.attendanceClassId||!state.attendanceTermId||!state.attendanceDate)return;
+    root.innerHTML=`<div class="empty">Loading attendance register</div>`;
+    const data=await rpc("get_class_attendance_register",{target_term_id:state.attendanceTermId,target_class_id:state.attendanceClassId,target_date:state.attendanceDate});
+    if(token!==state.viewToken||!byId("attendanceResults"))return;
+    state.attendanceData=data;
+    const rows=data.students||[],opened=Number(data.days_school_opened||0),marked=Boolean(data.register?.id);
+    root.innerHTML=`
+      <div class="panel-header"><div><h3>${esc(data.class?.name||"Assigned Class")}</h3><p>${isoDate(state.attendanceDate)} • ${marked?"Attendance already recorded":"New attendance register"}</p></div>
+        <div class="button-row"><button class="button outline small" id="attendanceAllPresent" type="button" ${rows.length?"":"disabled"}>Mark all present</button><button class="button primary" id="attendanceSave" type="button" ${rows.length?"":"disabled"}>Save attendance</button></div></div>
+      <div class="panel-body">
+        <div class="metric-row attendance-summary"><div class="metric"><span>Students</span><strong>${number(rows.length)}</strong></div><div class="metric"><span>School days recorded</span><strong>${number(opened)}</strong></div><div class="metric"><span>Selected date</span><strong>${esc(marked?"Recorded":"Not recorded")}</strong></div></div>
+        ${rows.length?`<div class="table-wrap"><table><thead><tr><th>Student</th><th>Admission No.</th><th>Daily status</th><th>Term attendance</th></tr></thead><tbody>
+          ${rows.map(row=>`<tr><td><div class="cell-copy"><strong>${esc(row.full_name)}</strong><small>${row.roll_number?`Roll ${esc(row.roll_number)}`:""}</small></div></td><td>${esc(row.admission_no)}</td>
+            <td><select class="attendance-status-select" data-attendance-enrollment="${attr(row.enrollment_id)}">${attendanceStatusOptions(row.attendance_status)}</select></td>
+            <td><strong>${number(row.days_present)} / ${number(row.days_school_opened)}</strong><small class="attendance-term-label"> days present</small></td></tr>`).join("")}
+        </tbody></table></div><label class="field attendance-notes"><span>Attendance note (optional)</span><textarea id="attendanceNotes">${esc(data.register?.notes||"")}</textarea></label>`:
+        `<div class="empty"><strong>No students found</strong><span>No active student records are enrolled in this class for the selected term.</span></div>`}
+      </div>`;
+    byId("attendanceAllPresent")?.addEventListener("click",()=>$$('[data-attendance-enrollment]',root).forEach(select=>{select.value="present"}));
+    byId("attendanceSave")?.addEventListener("click",saveClassAttendance);
+  }
+  async function saveClassAttendance() {
+    const button=byId("attendanceSave"),entries=$$('[data-attendance-enrollment]',byId("attendanceResults")).map(select=>({enrollment_id:select.dataset.attendanceEnrollment,attendance_status:select.value}));
+    if(!entries.length)return;
+    button.disabled=true;button.textContent="Saving";
+    try{
+      const data=await rpc("save_class_attendance",{target_term_id:state.attendanceTermId,target_class_id:state.attendanceClassId,target_date:state.attendanceDate,entries,notes_text:byId("attendanceNotes")?.value.trim()||""});
+      state.attendanceData=data;state.workspace=null;toast("Attendance saved",`${number(data.days_school_opened||0)} school day${Number(data.days_school_opened||0)===1?"":"s"} recorded for this term.`);await loadAttendanceRegister();
+    }catch(error){toast("Attendance not saved",friendlyError(error),"error",6500)}
+    finally{if(button){button.disabled=false;button.textContent="Save attendance"}}
+  }
+
   async function renderMySubjects(token,force=false) {
     const data=await loadRoleWorkspace(force);if(token!==state.viewToken)return;
     const subjects=data.subjects||[];
@@ -786,6 +882,9 @@
   }
 
   async function renderStudents(token) {
+    const visibleClasses=await visibleClassesForCurrentRole();
+    if(token!==state.viewToken)return;
+    if(state.studentClassFilter&&!visibleClasses.some(item=>item.id===state.studentClassFilter))state.studentClassFilter="";
     const content=byId("content");
     content.innerHTML=`
       <div class="page-head"><div><h3>Student Directory</h3><p>Secure student, guardian, and enrolment records</p></div>
@@ -795,7 +894,7 @@
       <section class="panel">
         <div class="toolbar">
           <label class="search"><input id="studentSearch" type="search" placeholder="Search name or admission number"></label>
-          <select id="studentClass">${optionList(state.boot.classes||[],"id","name",state.studentClassFilter||"","All classes")}</select>
+          <select id="studentClass">${optionList(visibleClasses,"id","name",state.studentClassFilter||"",["class_teacher","subject_teacher"].includes(role())?"All assigned classes":"All classes")}</select>
           <select id="studentStatus"><option value="">All statuses</option><option value="active">Active</option><option value="graduated">Graduated</option><option value="withdrawn">Withdrawn</option><option value="suspended">Suspended</option></select>
           ${can("remove_students")?`<select id="studentArchive"><option value="active">Current records</option><option value="archived">Archived records</option><option value="all">All records</option></select>`:""}
         </div>
@@ -1768,6 +1867,9 @@
 
   async function renderReports(token) {
     state.reportEditor=null;
+    const visibleClasses=await visibleClassesForCurrentRole();
+    if(token!==state.viewToken)return;
+    if(state.reportClassFilter&&!visibleClasses.some(item=>item.id===state.reportClassFilter))state.reportClassFilter="";
     byId("content").innerHTML=`
       <div class="page-head"><div><h3>Report Cards</h3><p>Transactional assessment, review, approval, and publication</p></div>
         <div class="page-actions">
@@ -1781,7 +1883,7 @@
         <div class="toolbar">
           <label class="search"><input id="reportSearch" type="search" placeholder="Search student or report number"></label>
           <select id="reportTerm">${optionList(state.boot.terms||[],"id","name",activeTerm()?.id,"All terms")}</select>
-          <select id="reportClass">${optionList(state.boot.classes||[],"id","name",state.reportClassFilter||"","All classes")}</select>
+          <select id="reportClass">${optionList(visibleClasses,"id","name",state.reportClassFilter||"",["class_teacher","subject_teacher"].includes(role())?"All assigned classes":"All classes")}</select>
           <select id="reportStatus"><option value="">All statuses</option>
             ${["draft","submitted","class_reviewed","approved","published","returned","withdrawn"].map(v=>`<option value="${v}">${v.replaceAll("_"," ")}</option>`).join("")}</select>
         </div>
@@ -1831,9 +1933,10 @@
   }
 
   async function openNewReportPicker() {
+    const visibleClasses=await visibleClassesForCurrentRole();
     modal("New Report Card","Select a student enrolment and term",`
       <div class="form-grid">
-        <label class="field"><span>Class</span><select id="newReportClass">${optionList(state.boot.classes||[],"id","name")}</select></label>
+        <label class="field"><span>Class</span><select id="newReportClass">${optionList(visibleClasses,"id","name")}</select></label>
         <label class="field"><span>Term</span><select id="newReportTerm">${optionList(state.boot.terms||[],"id","name",activeTerm()?.id)}</select></label>
       </div>
       <label class="field new-report-student-field" style="margin-top:15px"><span>Student</span>
@@ -1899,7 +2002,7 @@
   function promotionDisplay(evaluation=localPromotionEvaluation()) {
     if(!evaluation.term3)return {title:"Not applicable",detail:"This record is not recognised as Term 3. Automatic promotion uses Term 3 results only.",state:"neutral"};
     if(!evaluation.complete)return {title:"Awaiting complete results",detail:`All assigned subjects must be completed before the ${number(evaluation.cutoff||50,0)}% promotion rule is applied.`,state:"warning"};
-    if(evaluation.passed&&evaluation.next_class_name&&evaluation.promotion_applied)return {title:`Promoted to ${evaluation.next_class_name}`,detail:`The approved ${evaluation.target_academic_year_name||"next academic year"} enrolment has been created. Source-year records remain in their original class for historical accuracy.`,state:"pass"};
+    if(evaluation.passed&&evaluation.next_class_name&&evaluation.promotion_applied)return {title:`Promoted to ${evaluation.next_class_name}`,detail:`The approved ${evaluation.target_academic_year_name||"next academic year"} enrolment is now the student’s active class placement. The earlier enrolment remains only in protected history.`,state:"pass"};
     if(evaluation.passed&&evaluation.next_class_name&&evaluation.approval_required)return {title:`Eligible for ${evaluation.next_class_name}`,detail:`Term 3 average ${number(evaluation.average,1)}% meets the ${number(evaluation.cutoff,0)}% cutoff. The next-year enrolment will be created only after Principal approval or publication.`,state:"warning"};
     if(evaluation.passed&&evaluation.next_class_name)return {title:`Eligible for ${evaluation.next_class_name}`,detail:`Term 3 average ${number(evaluation.average,1)}% meets the cutoff. Run Term 3 Promotion Processing after approval to create the ${evaluation.target_academic_year_name||"next-year"} enrolment.`,state:"pass"};
     if(evaluation.passed&&!evaluation.next_class_name)return {title:"Passed, no next class configured",detail:`Term 3 average ${number(evaluation.average,1)}% meets the ${number(evaluation.cutoff,0)}% cutoff.`,state:"pass"};
@@ -1964,8 +2067,8 @@
           <div class="panel-body">
             <form id="reportForm" class="form-stack">
               <div class="form-grid three">
-                <label class="field"><span>Days school opened</span><input name="days_school_opened" type="number" min="0" value="${attr(report.days_school_opened||0)}" ${fieldsLocked?"disabled":""}></label>
-                <label class="field"><span>Days present</span><input name="days_present" type="number" min="0" value="${attr(report.days_present||0)}" ${fieldsLocked?"disabled":""}></label>
+                <label class="field"><span>Days school opened (automatic)</span><input name="days_school_opened" type="number" min="0" value="${attr(report.days_school_opened||0)}" readonly></label>
+                <label class="field"><span>Days present (automatic)</span><input name="days_present" type="number" min="0" value="${attr(report.days_present||0)}" readonly></label>
                 ${(()=>{const display=promotionDisplay(editor.promotion||localPromotionEvaluation(editor));return `<div class="field automatic-promotion-field" id="automaticPromotionField" data-promotion-state="${display.state}"><span>Automatic promotion</span><strong id="automaticPromotionValue">${esc(display.title)}</strong><small id="automaticPromotionDetail">${esc(display.detail)}</small></div>`})()}
                 <label class="field"><span>Attitude</span><input name="attitude" value="${attr(report.attitude||"")}" ${fieldsLocked?"disabled":""}></label>
                 <label class="field"><span>Conduct</span><input name="conduct" value="${attr(report.conduct||"")}" ${fieldsLocked?"disabled":""}></label>
@@ -2216,10 +2319,11 @@
       ${subjects.map(name=>`<tr><td>${esc(name)}</td><td>${number(as[name],1)}</td><td>${number(bs[name],1)}</td><td>${number(Number(bs[name]||0)-Number(as[name]||0),1)}</td></tr>`).join("")}
     </tbody></table></div>`;
   }
-  function openScoreImport() {
+  async function openScoreImport() {
+    const visibleClasses=await visibleClassesForCurrentRole();
     modal("Import Scores","CSV assessment score entries",`<form id="scoreImportForm" class="form-stack">
       <div class="form-grid"><label class="field"><span>Term</span><select name="term_id" required>${optionList(state.boot.terms||[],"id","name",activeTerm()?.id)}</select></label>
-      <label class="field"><span>Class</span><select name="class_id" required>${optionList(state.boot.classes||[],"id","name")}</select></label></div>
+      <label class="field"><span>Class</span><select name="class_id" required>${optionList(visibleClasses,"id","name")}</select></label></div>
       <label class="file-drop"><strong>CSV file</strong><input name="file" type="file" accept=".csv,text/csv" required></label>
     </form>`,`<button class="button ghost" id="scoreImportCancel" type="button">Cancel</button><button class="button primary" id="scoreImportRun" type="button">Import</button>`,"small");
     byId("scoreImportCancel").onclick=closeModal;
@@ -4124,7 +4228,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.7.4 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.8.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4159,13 +4263,14 @@
   ]);
   const REUSABLE_PACKAGE_SOURCE_FILES=Object.freeze([
     "01_schema_foundation.sql","02_schema_operations.sql","03A_schema_hardening_persistence_and_jobs.sql",
-    "03B1_schema_staff_academics_and_signatures.sql","03B2_schema_governance_workflow_and_upgrades.sql","04_schema.sql","05_schema.sql",
+    "03B1_schema_staff_academics_and_signatures.sql","03B2_schema_governance_workflow_and_upgrades.sql","04_schema.sql","05_schema.sql","06_schema.sql",
     "supabase/functions/admin-user-management/index.ts","supabase/functions/notification-dispatcher/index.ts","supabase/functions/scheduled-backup/index.ts",
     "tools/backup-decryptor.html","tools/vendor/jszip-3.10.1.min.js",
     "README_FIRST_FRESH_INSTALL.txt","QUICK_INSTALL_CHECKLIST.txt","SCHEMA_SEQUENCE_POLICY.txt","PROJECT_MANIFEST.json",
     "COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md","FINAL_BACKUP_AND_RESTORE_RUNBOOK.md",
     "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","RELEASE_NOTES_6_7_3_COMPACT_SCROLL_LISTS.txt","UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt","Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt"
+    "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt","UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt","Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt"
   ]);
   const PACKAGE_LOGO_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
@@ -4173,7 +4278,7 @@
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
       <article><b>1</b><div><strong>Generate</strong><span>Enter the new school identity, upload its logo, and download the complete fresh package.</span></div></article>
-      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the seven schema files, deploy the three Edge Functions, and run SCHOOL_IDENTITY_SETUP.sql.</span></div></article>
+      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the eight schema files, deploy the three Edge Functions, and run SCHOOL_IDENTITY_SETUP.sql.</span></div></article>
       <article><b>3</b><div><strong>Create GitHub repository</strong><span>Upload only the contents of GITHUB_PAGES_FRONTEND to the repository root.</span></div></article>
       <article><b>4</b><div><strong>Enable GitHub Pages</strong><span>Publish from the main branch and root folder, then configure the final URL in Supabase Auth.</span></div></article>
     </div>`;
@@ -4212,7 +4317,7 @@
             </div>
           </section>
           <section class="panel pad"><div class="section-title"><h4>Generated Package Contents</h4></div>
-            <div class="diff-row"><span>Seven ordered database schema files</span><b>Included</b></div>
+            <div class="diff-row"><span>Eight ordered database schema files</span><b>Included</b></div>
             <div class="diff-row"><span>Three Supabase Edge Functions</span><b>Included</b></div>
             <div class="diff-row"><span>Branded GitHub Pages frontend</span><b>Included</b></div>
             <div class="diff-row"><span>School identity SQL</span><b>Included</b></div>
@@ -4246,14 +4351,14 @@
       .replace(/window\.NIS_CONFIG\?\.logoPath \|\| "[^"]*"/,'window.NIS_CONFIG?.logoPath || "assets/school-logo.png"');
   }
   function generatorConfigText(identity) {
-    return `// Generated by Report Card Enterprise v6.7.4 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
+    return `// Generated by Report Card Enterprise v6.8.0 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
   }
   function generatorIdentitySql(identity) {
-    return `-- ${identity.schoolName} identity bootstrap\n-- Run after 05_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
+    return `-- ${identity.schoolName} identity bootstrap\n-- Run after 06_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
   }
   function generatorReadme(identity) {
     const configured=Boolean(identity.supabaseUrl&&identity.supabaseKey);
-    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.7.4 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the seven SQL files in order, from 01_schema_foundation.sql through 05_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
+    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.8.0 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the eight SQL files in order, from 01_schema_foundation.sql through 06_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
   }
   function generatedIndexHtml(baseHtml,identity) {
     const safeName=esc(identity.schoolName);
@@ -4325,7 +4430,7 @@
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
       progressText.textContent="Converting school logo";const logoBlob=await packageLogoPng(byId("schoolPackageLogo").files?.[0]);
-      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.7.4`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
+      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.8.0`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
       progressText.textContent="Loading application files";
       const textFiles={};
       for(const path of REUSABLE_FRONTEND_TEXT_FILES)textFiles[path]=await fetchPackageFile(path,false);
@@ -4337,7 +4442,7 @@
       for(const path of REUSABLE_FRONTEND_BINARY_FILES){completed+=1;progressText.textContent=`Copying frontend assets ${completed}/${total}`;zip.file(`${frontend}/${path}`,await fetchPackageFile(path,true));}
       for(const path of REUSABLE_PACKAGE_SOURCE_FILES){completed+=1;progressText.textContent=`Copying Supabase and recovery files ${completed}/${total}`;const data=await fetchPackageFile(`package-source/${path}`,true);zip.file(`${root}/${path}`,data);zip.file(`${frontend}/package-source/${path}`,data);}
       zip.file(`${root}/SCHOOL_IDENTITY_SETUP.sql`,generatorIdentitySql(identity));zip.file(`${root}/GENERATED_PACKAGE_README.md`,generatorReadme(identity));
-      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.7.4",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
+      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.8.0",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
       progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_4_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
       toast("Reusable school package generated",emailDomainProvided?`${filename} is ready for the new school's separate Supabase and GitHub deployment.`:`${filename} is ready. A safe .invalid email-domain placeholder was added and can be changed later in Settings.`,"success",9000);setSync("online","Synced");
     } catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"reusable_school_package_generator"})}

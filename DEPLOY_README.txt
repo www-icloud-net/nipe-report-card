@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v6.7.4 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.8.0 REUSABLE SCHOOLS EDITION
 GITHUB PAGES FRONTEND
 
 1. Edit config.js with the browser-safe Supabase Project URL and Publishable key.
@@ -6,7 +6,9 @@ GITHUB PAGES FRONTEND
 3. Enable GitHub Pages from main / root.
 4. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.
 5. Close old application tabs and perform a hard refresh after deployment.
-6. Confirm that long Students, Teachers, Users and Access, Report Cards, Notifications, and Audit lists scroll inside their panels.
+6. Confirm Students and staff lists are alphabetical.
+7. Sign in as a class teacher and verify only assigned-class students are visible.
+8. Mark attendance for one date and confirm report attendance totals update automatically.
 
 The System Administrator GitHub Navigator can generate a complete separately branded package for another school. The package-source folder is required by that generator and must remain in the deployment.
 

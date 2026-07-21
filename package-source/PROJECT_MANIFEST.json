@@ -1,8 +1,8 @@
 {
   "product": "Report Card Enterprise",
-  "version": "6.7.4 Reusable Schools Edition",
-  "release_date": "2026-07-20",
-  "baseline": "Confirmed working v6.7.3 Reusable Schools Edition",
+  "version": "6.8.0 Reusable Schools Edition",
+  "release_date": "2026-07-21",
+  "baseline": "Confirmed stable production v6.7.4 Reusable Schools Edition",
   "edition": "Reusable Schools, Supabase Dashboard and GitHub Pages Edition",
   "database_files": [
     "01_schema_foundation.sql",
@@ -11,12 +11,13 @@
     "03B1_schema_staff_academics_and_signatures.sql",
     "03B2_schema_governance_workflow_and_upgrades.sql",
     "04_schema.sql",
-    "05_schema.sql"
+    "05_schema.sql",
+    "06_schema.sql"
   ],
   "schema_policy": {
-    "frozen_through": "04_schema.sql",
-    "current_upgrade_file": "05_schema.sql",
-    "next_file_when_limit_reached": "06_schema.sql"
+    "frozen_through": "05_schema.sql",
+    "current_upgrade_file": "06_schema.sql",
+    "next_file_when_limit_reached": "07_schema.sql"
   },
   "edge_functions": {
     "admin-user-management": {
@@ -69,6 +70,12 @@
     "html2canvas": "1.4.1"
   },
   "final_build_improvements": [
+    "Alphabetical full-name ordering for student, teacher, principal, and user directories",
+    "Strict current-placement student visibility for officially assigned class and subject teachers",
+    "Promotion-controlled active enrolment transfer to the next class",
+    "Class-teacher-only daily attendance register",
+    "Automatic term attendance totals synchronized to report cards",
+    "Attendance registers included in encrypted scheduled backups",
     "Complete encrypted database, Auth metadata and private Storage backup",
     "AES-256-GCM NISB2 encryption with separate required backup key",
     "Retention policy, weekly verification and administrator-confirmed off-site copy tracking",
@@ -113,7 +120,6 @@
     "RELEASE_NOTES_6_7_1_REUSABLE_SCHOOLS.txt",
     "UPGRADE_FROM_V6_7_0_TO_V6_7_1_REUSABLE.txt",
     "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md",
-    "SHA256SUMS.txt",
     "RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt",
     "UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt",
     "Report_Card_Enterprise_v6_7_2_VALIDATION_REPORT.txt",
@@ -122,12 +128,15 @@
     "Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt",
     "UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt",
-    "Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt"
+    "Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt",
+    "UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt",
+    "Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt"
   ],
   "verification_scope": {
-    "package_level": "Static syntax, frontend parity, adaptive report-row behavior, deep-blue remark rendering, bulk package workflow, SQL-file preservation, checksum and archive tests",
-    "not_available_in_build_environment": "Live Supabase SQL execution, production RLS acceptance, Edge runtime duration tests and real-role browser acceptance",
-    "required_after_deployment": "Complete the acceptance procedures in the setup and upgrade guides"
+    "package_level": "PostgreSQL SQL parsing, JavaScript and service-worker syntax, TypeScript Edge Function syntax, JSON parsing, frontend mirror parity, reusable-generator source completeness, authorization and attendance feature assertions, checksum generation, and ZIP integrity testing",
+    "not_available_in_build_environment": "Live execution against the school Supabase project, production Row Level Security acceptance, real-account browser workflows, email delivery, and scheduled Edge runtime execution",
+    "required_after_deployment": "Run the role-based and data-based acceptance procedures in UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt before declaring the deployment accepted"
   },
   "reusable_school_generator": {
     "navigation": "System Administrator > GitHub Navigator, immediately after Settings",
@@ -135,7 +144,7 @@
       "Complete fresh package ZIP",
       "Branded GITHUB_PAGES_FRONTEND",
       "SCHOOL_IDENTITY_SETUP.sql",
-      "Seven ordered SQL files",
+      "Eight ordered SQL files",
       "Three Edge Functions",
       "Recovery tools and guides"
     ],

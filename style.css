@@ -785,3 +785,11 @@ td{font-size:13px}
   .managed-card-list{max-height:55vh}
   .new-report-student-list{min-height:200px;max-height:42vh}
 }
+
+/* v6.8.0 class attendance */
+.attendance-controls{align-items:end}
+.attendance-summary{margin-bottom:16px}
+.attendance-status-select{min-width:125px;padding:9px 34px 9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);font:inherit}
+.attendance-notes{margin-top:16px}
+.attendance-term-label{display:inline;color:var(--muted)}
+@media (max-width:720px){.attendance-status-select{min-width:110px}.attendance-controls{grid-template-columns:1fr}}

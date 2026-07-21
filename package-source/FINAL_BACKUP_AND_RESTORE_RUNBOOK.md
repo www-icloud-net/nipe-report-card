@@ -84,6 +84,7 @@ Run the seven permanent SQL files in order:
 5. `03B2_schema_governance_workflow_and_upgrades.sql`
 6. `04_schema.sql`
 7. `05_schema.sql`
+8. `06_schema.sql`
 
 Deploy all three Edge Functions and configure secrets and Vault exactly as described in the complete fresh setup guide.
 

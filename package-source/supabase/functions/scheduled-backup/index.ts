@@ -20,7 +20,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
-const SCHEMA_VERSION = "6.7.0";
+const SCHEMA_VERSION = "6.8.0";
 const BACKUP_FORMAT_VERSION = 2;
 const BACKUP_BUCKET = "system-backups";
 const SOURCE_BUCKETS = [
@@ -45,6 +45,8 @@ const TABLES = [
   "student_guardians",
   "guardian_links",
   "enrollments",
+  "class_attendance_registers",
+  "student_attendance_entries",
   "grading_scales",
   "assessment_schemes",
   "assessment_components",
