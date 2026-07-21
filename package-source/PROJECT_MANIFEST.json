@@ -1,8 +1,8 @@
 {
   "product": "Report Card Enterprise",
-  "version": "6.8.0 Reusable Schools Edition",
+  "version": "6.8.1 Reusable Schools Edition",
   "release_date": "2026-07-21",
-  "baseline": "Confirmed stable production v6.7.4 Reusable Schools Edition",
+  "baseline": "Confirmed stable production v6.8.0 Reusable Schools Edition",
   "edition": "Reusable Schools, Supabase Dashboard and GitHub Pages Edition",
   "database_files": [
     "01_schema_foundation.sql",
@@ -12,12 +12,13 @@
     "03B2_schema_governance_workflow_and_upgrades.sql",
     "04_schema.sql",
     "05_schema.sql",
-    "06_schema.sql"
+    "06_schema.sql",
+    "07_schema.sql"
   ],
   "schema_policy": {
-    "frozen_through": "05_schema.sql",
-    "current_upgrade_file": "06_schema.sql",
-    "next_file_when_limit_reached": "07_schema.sql"
+    "frozen_through": "06_schema.sql",
+    "current_upgrade_file": "07_schema.sql",
+    "next_file_when_limit_reached": "08_schema.sql"
   },
   "edge_functions": {
     "admin-user-management": {
@@ -70,6 +71,12 @@
     "html2canvas": "1.4.1"
   },
   "final_build_improvements": [
+    "Class-teacher-only individual submission of complete reports for Principal approval",
+    "Subject-teacher submission and publication blocked at the database authorization layer",
+    "Class teacher and System Administrator publication authority after Principal approval",
+    "Class-level bulk submit, Principal bulk approve, and class-level bulk publish workflows",
+    "Bulk workflow result isolation for incomplete reports, missing reports, and per-report failures",
+    "Automatic official PDF storage following successful bulk publication",
     "Alphabetical full-name ordering for student, teacher, principal, and user directories",
     "Strict current-placement student visibility for officially assigned class and subject teachers",
     "Promotion-controlled active enrolment transfer to the next class",
@@ -131,12 +138,15 @@
     "Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt",
     "UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt",
-    "Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt"
+    "Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_8_1_REPORT_WORKFLOW_CONTROL.txt",
+    "UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt",
+    "Report_Card_Enterprise_v6_8_1_VALIDATION_REPORT.txt"
   ],
   "verification_scope": {
-    "package_level": "PostgreSQL SQL parsing, JavaScript and service-worker syntax, TypeScript Edge Function syntax, JSON parsing, frontend mirror parity, reusable-generator source completeness, authorization and attendance feature assertions, checksum generation, and ZIP integrity testing",
+    "package_level": "SQL lexical structure and workflow feature assertions, JavaScript and service-worker syntax, TypeScript transpilation syntax, JSON parsing, frontend mirror parity, reusable-generator source completeness, authorization assertions, checksum generation, and ZIP integrity testing",
     "not_available_in_build_environment": "Live execution against the school Supabase project, production Row Level Security acceptance, real-account browser workflows, email delivery, and scheduled Edge runtime execution",
-    "required_after_deployment": "Run the role-based and data-based acceptance procedures in UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt before declaring the deployment accepted"
+    "required_after_deployment": "Run the role-based and data-based acceptance procedures in UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt before declaring the deployment accepted"
   },
   "reusable_school_generator": {
     "navigation": "System Administrator > GitHub Navigator, immediately after Settings",
@@ -144,7 +154,7 @@
       "Complete fresh package ZIP",
       "Branded GITHUB_PAGES_FRONTEND",
       "SCHOOL_IDENTITY_SETUP.sql",
-      "Eight ordered SQL files",
+      "Nine ordered SQL files",
       "Three Edge Functions",
       "Recovery tools and guides"
     ],

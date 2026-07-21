@@ -20,7 +20,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
-const SCHEMA_VERSION = "6.8.0";
+const SCHEMA_VERSION = "6.8.1";
 const BACKUP_FORMAT_VERSION = 2;
 const BACKUP_BUCKET = "system-backups";
 const SOURCE_BUCKETS = [

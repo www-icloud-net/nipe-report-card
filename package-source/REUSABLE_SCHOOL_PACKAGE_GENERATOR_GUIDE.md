@@ -35,9 +35,9 @@ The generator rejects Supabase Secret keys and service-role keys. Never enter da
 ## New-school installation
 
 1. Create a separate Supabase project.
-2. Run the eight SQL files in their numbered order, ending with `06_schema.sql`.
+2. Run the nine SQL files in their numbered order, ending with `07_schema.sql`.
 3. Deploy all three Edge Functions and configure required secrets.
-4. Run `SCHOOL_IDENTITY_SETUP.sql` after `06_schema.sql`.
+4. Run `SCHOOL_IDENTITY_SETUP.sql` after `07_schema.sql`.
 5. Edit the generated `config.js` when Supabase values were not supplied during generation.
 6. Upload the contents of `GITHUB_PAGES_FRONTEND` to a new GitHub repository.
 7. Enable GitHub Pages and configure the final URL in Supabase Authentication URL settings.

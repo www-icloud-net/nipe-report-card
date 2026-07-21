@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v6.8.0 QUICK INSTALL CHECKLIST
+REPORT CARD ENTERPRISE v6.8.1 QUICK INSTALL CHECKLIST
 
 FRESH INSTALL
 [ ] Create a new Supabase project.
@@ -12,21 +12,26 @@ FRESH INSTALL
 [ ] Run 04_schema.sql.
 [ ] Run 05_schema.sql.
 [ ] Run 06_schema.sql.
+[ ] Run 07_schema.sql.
 [ ] Configure GITHUB_PAGES_FRONTEND/config.js with the browser-safe Project URL and Publishable key.
 [ ] Upload only the contents of GITHUB_PAGES_FRONTEND to the GitHub repository root.
 [ ] Configure Supabase Authentication Site URL and Redirect URLs.
 [ ] Create or verify the System Administrator account.
-[ ] Assign teachers to classes and subjects.
+[ ] Assign class teachers and subject teachers correctly.
 [ ] Verify alphabetical student and staff directories.
 [ ] Verify teacher student visibility using current class placement.
 [ ] Verify Term 3 promotion moves the active placement only for promoted students.
 [ ] Verify class-teacher attendance and automatic report totals.
-[ ] Run and verify an encrypted backup containing attendance tables.
+[ ] Verify class-teacher-only report submission.
+[ ] Verify Principal individual and class-level bulk approval.
+[ ] Verify class teacher and System Administrator individual and class-level bulk publication.
+[ ] Verify subject teachers cannot submit or publish reports.
+[ ] Run and verify an encrypted backup.
 
-UPGRADE FROM v6.7.4
-[ ] Preserve the v6.7.4 rollback ZIP.
+UPGRADE FROM v6.8.0
+[ ] Preserve the v6.8.0 rollback ZIP.
 [ ] Create a verified encrypted backup.
-[ ] Run 06_schema.sql only.
-[ ] Redeploy scheduled-backup.
-[ ] Deploy the v6.8.0 frontend while preserving config.js.
-[ ] Complete all acceptance tests in UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt.
+[ ] Run 07_schema.sql only.
+[ ] Redeploy scheduled-backup for v6.8.1 metadata.
+[ ] Deploy the v6.8.1 frontend while preserving config.js.
+[ ] Complete all acceptance tests in UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt.

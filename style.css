@@ -786,7 +786,7 @@ td{font-size:13px}
   .new-report-student-list{min-height:200px;max-height:42vh}
 }
 
-/* v6.8.0 class attendance */
+/* v6.8.1 class attendance and report workflow */
 .attendance-controls{align-items:end}
 .attendance-summary{margin-bottom:16px}
 .attendance-status-select{min-width:125px;padding:9px 34px 9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--text);font:inherit}

@@ -1877,6 +1877,9 @@
           <button class="button outline" id="manualReportTemplate">Manual template</button>
           <button class="button outline" id="reportExport">Export list</button>
           ${canBulkDownloadPublishedReports()?`<button class="button secondary" id="reportBulkDownload">Bulk class PDFs</button>`:""}
+          ${can("bulk_submit_reports")?`<button class="button secondary" id="reportBulkSubmit">Submit class reports</button>`:""}
+          ${can("bulk_approve_reports")?`<button class="button success" id="reportBulkApprove">Approve class reports</button>`:""}
+          ${can("bulk_publish_reports")?`<button class="button success" id="reportBulkPublish">Publish class reports</button>`:""}
           ${can("create_reports")?`<button class="button primary" id="reportNew">New report</button>`:""}
         </div></div>
       <section class="panel">
@@ -1894,6 +1897,9 @@
     byId("manualReportTemplate")?.addEventListener("click",openManualReportTemplate);
     byId("reportExport")?.addEventListener("click",exportReportList);
     byId("reportBulkDownload")?.addEventListener("click",openBulkPublishedReportPackage);
+    byId("reportBulkSubmit")?.addEventListener("click",()=>requestBulkReportTransition("submitted"));
+    byId("reportBulkApprove")?.addEventListener("click",()=>requestBulkReportTransition("approved"));
+    byId("reportBulkPublish")?.addEventListener("click",()=>requestBulkReportTransition("published"));
     let timer;
     byId("reportSearch").oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{state.reportPage=1;loadReportPage(token)},250)};
     ["reportTerm","reportClass","reportStatus"].forEach(id=>{if(byId(id))byId(id).onchange=()=>{state.reportPage=1;loadReportPage(token)}});
@@ -1913,6 +1919,71 @@
     $$("[data-report-archive]",root).forEach(btn=>btn.onclick=()=>archiveReportCard(btn.dataset.reportArchive));
     bindPagination("report",data);
   }
+  function bulkReportWorkflowDefinition(targetStatus) {
+    return {
+      submitted:{title:"Submit Class Reports",verb:"submit",past:"submitted",button:"Submit all eligible reports",permission:"bulk_submit_reports",source:"draft or returned"},
+      approved:{title:"Approve Class Reports",verb:"approve",past:"approved",button:"Approve all eligible reports",permission:"bulk_approve_reports",source:"submitted"},
+      published:{title:"Publish Class Reports",verb:"publish",past:"published",button:"Publish all approved reports",permission:"bulk_publish_reports",source:"approved"}
+    }[targetStatus]||null;
+  }
+  async function storeBulkPublishedReportPdfs(reportIds=[]) {
+    const ids=[...new Set((reportIds||[]).filter(Boolean))];
+    if(!ids.length)return {created:0,failed:0};
+    modal("Creating Official PDFs","Published report records are secure while the latest official PDF files are generated.",`
+      <div class="template-information"><strong id="bulkPublishPdfHeading">Preparing official PDFs</strong><span id="bulkPublishPdfProgress">0 of ${ids.length} completed</span></div>`,
+      `<button class="button ghost" type="button" disabled>Please wait</button>`,"small");
+    let created=0,failed=0;
+    for(let index=0;index<ids.length;index++){
+      const reportId=ids[index];
+      try{
+        const editor=await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:null,target_term_id:null});
+        const publication=(editor.publications||[]).find(item=>!item.revoked_at);
+        if(!publication)throw new Error("Active publication record not found");
+        await createAndStoreOfficialPdf(editor,publication);created+=1;
+      }catch(error){
+        failed+=1;await reportClientError(error,{source:"bulk_publish_pdf",report_id:reportId});
+      }
+      const progress=byId("bulkPublishPdfProgress");
+      if(progress)progress.textContent=`${index+1} of ${ids.length} completed • ${created} stored${failed?` • ${failed} failed`:""}`;
+    }
+    closeModal();
+    return {created,failed};
+  }
+  async function requestBulkReportTransition(targetStatus) {
+    const definition=bulkReportWorkflowDefinition(targetStatus);
+    if(!definition||!can(definition.permission)){toast("Bulk action unavailable","Your account is not permitted to perform this class workflow action.","error");return}
+    const termId=byId("reportTerm")?.value||"",classId=byId("reportClass")?.value||"";
+    if(!termId||!classId){toast("Select a class and term","Bulk workflow actions require one specific class and one specific term.","warning",6500);return}
+    const term=(state.boot.terms||[]).find(item=>item.id===termId),classRow=(state.boot.classes||[]).find(item=>item.id===classId);
+    if(role()==="class_teacher"&&["submitted","published"].includes(targetStatus)){
+      const workspace=await loadRoleWorkspace();
+      if(!(workspace.classes||[]).some(item=>item.class_id===classId)){
+        toast("Class-teacher assignment required",`You may ${definition.verb} all reports only for the class where you are the assigned class teacher.`,"error",7000);return;
+      }
+    }
+    modal(definition.title,`${classRow?.name||"Selected class"} • ${term?.name||"Selected term"}`,`
+      <div class="template-information"><strong>Class-level workflow</strong><span>All ${definition.source} reports in this class will be checked. Reports with incomplete assigned subjects or required scores will remain unchanged and will be listed as failed.</span></div>
+      <label class="field" style="margin-top:15px"><span>Comment</span><textarea id="bulkWorkflowComment" placeholder="Optional workflow comment"></textarea></label>`,
+      `<button class="button ghost" id="bulkWorkflowCancel" type="button">Cancel</button><button class="button primary" id="bulkWorkflowConfirm" type="button">${definition.button}</button>`,"small");
+    byId("bulkWorkflowCancel").onclick=closeModal;
+    byId("bulkWorkflowConfirm").onclick=async()=>{
+      const button=byId("bulkWorkflowConfirm"),comment=byId("bulkWorkflowComment").value.trim();button.disabled=true;
+      try{
+        const result=await rpc("bulk_transition_class_reports",{target_term_id:termId,target_class_id:classId,target_status:targetStatus,comment_text:comment});
+        closeModal();state.workspace=null;
+        let pdfSummary="";
+        if(targetStatus==="published"&&Number(result.transitioned_reports||0)>0){
+          const pdf=await storeBulkPublishedReportPdfs(result.transitioned_report_ids||[]);
+          pdfSummary=` • ${pdf.created} official PDF${pdf.created===1?"":"s"} stored${pdf.failed?` • ${pdf.failed} PDF failure${pdf.failed===1?"":"s"}`:""}`;
+        }
+        const transitioned=Number(result.transitioned_reports||0),failed=Number(result.failed_reports||0),missing=Number(result.missing_reports||0),already=Number(result.already_target_status||0);
+        toast(`${definition.title} completed`,`${transitioned} report${transitioned===1?"":"s"} ${definition.past}${failed?` • ${failed} incomplete or unsuccessful`:""}${already?` • ${already} already ${definition.past}`:""}${missing?` • ${missing} student${missing===1?" has":"s have"} no report`:""}${pdfSummary}`,failed?"warning":"success",10000);
+        await loadReportPage();
+      }catch(error){toast(`${definition.title} unsuccessful`,friendlyError(error),"error",8000)}
+      finally{if(button)button.disabled=false}
+    };
+  }
+
   async function archiveReportCard(id) {
     const ok=await confirmAction("Permanently Delete Report Card","This permanently deletes the report, scores, revisions, workflow history, publication records, stored PDFs, and related audit history. This action cannot be undone.","Delete permanently",true);if(!ok)return;
     setLoading(true);
@@ -2459,19 +2530,22 @@
       if(!rows.length)throw new Error("No published report cards are available for this class and term, or your role is not assigned to them.");
       const zip=new window.JSZip(),folderName=safeArchiveSegment(`${classRow.name}_${term.name}`,"Published_Reports"),folder=zip.folder(folderName);
       const manifest=[];let completed=0,failed=0,storedRefreshes=0,fallbackDownloads=0;
+      const canStoreOfficialPdf=can("publish_reports")&&["system_admin","class_teacher"].includes(role());
       for(const row of rows){
         completed+=1;progressText.textContent=`Preparing ${completed} of ${rows.length}: ${row.student_name||row.report_number||"report"}`;
         try{
           const editor=await rpc("get_report_editor",{target_report_id:row.id,target_enrollment_id:null,target_term_id:null});
           const publication=(editor.publications||[]).find(item=>!item.revoked_at);
           if(!publication)throw new Error("Active publication record not found");
-          let pdf,storageStatus="refreshed";
-          try{
-            const generated=await createAndStoreOfficialPdf(editor,publication);pdf=generated.pdf;storedRefreshes+=1;
-          }catch(storageError){
-            pdf=await createReportPdf(editor,publication);storageStatus="downloaded_latest_not_stored";fallbackDownloads+=1;
-            await reportClientError(storageError,{source:"bulk_class_pdf_storage_refresh",report_id:row.id,class_id:classRow.id,term_id:term.id});
-          }
+          let pdf,storageStatus="downloaded_latest_not_stored";
+          if(canStoreOfficialPdf){
+            try{
+              const generated=await createAndStoreOfficialPdf(editor,publication);pdf=generated.pdf;storageStatus="refreshed";storedRefreshes+=1;
+            }catch(storageError){
+              pdf=await createReportPdf(editor,publication);fallbackDownloads+=1;
+              await reportClientError(storageError,{source:"bulk_class_pdf_storage_refresh",report_id:row.id,class_id:classRow.id,term_id:term.id});
+            }
+          }else{pdf=await createReportPdf(editor,publication);fallbackDownloads+=1}
           const studentName=editor.student?.full_name||row.student_name||"Student",admission=editor.student?.admission_no||row.admission_no||"";
           const reportNumber=editor.report?.report_number||row.report_number||row.id;
           const filename=`${safeArchiveSegment(reportNumber,"Report")}_${safeArchiveSegment(admission,"Admission")}_${safeArchiveSegment(studentName,"Student")}.pdf`;
@@ -2497,6 +2571,7 @@
   }
 
   async function createAndStoreOfficialPdf(editor,publication) {
+    if(!can("publish_reports")||!["system_admin","class_teacher"].includes(role()))throw new Error("Only the assigned class teacher or System Administrator can store an official report PDF");
     if(!editor?.report?.id||!publication||publication.revoked_at)throw new Error("Active publication record not found");
     const pdf=await createReportPdf(editor,publication);
     const checksum=await sha256(pdf),safeName=(editor.report.report_number||editor.report.id).replace(/[^A-Za-z0-9_-]/g,"_");
@@ -2565,7 +2640,7 @@
       const publication=(editor.publications||[]).find(item=>!item.revoked_at);
       if(!publication)throw new Error("Active publication record not found");
       let pdf,safeName=(editor.report.report_number||editor.report.id).replace(/[^A-Za-z0-9_-]/g,"_");
-      const canRefreshStoredPdf=can("publish_reports")&&["system_admin","class_teacher","subject_teacher"].includes(role());
+      const canRefreshStoredPdf=can("publish_reports")&&["system_admin","class_teacher"].includes(role());
       if(canRefreshStoredPdf){
         const generated=await createAndStoreOfficialPdf(editor,publication);
         pdf=generated.pdf;safeName=generated.safeName;
@@ -4228,7 +4303,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.8.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.8.1 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4263,14 +4338,15 @@
   ]);
   const REUSABLE_PACKAGE_SOURCE_FILES=Object.freeze([
     "01_schema_foundation.sql","02_schema_operations.sql","03A_schema_hardening_persistence_and_jobs.sql",
-    "03B1_schema_staff_academics_and_signatures.sql","03B2_schema_governance_workflow_and_upgrades.sql","04_schema.sql","05_schema.sql","06_schema.sql",
+    "03B1_schema_staff_academics_and_signatures.sql","03B2_schema_governance_workflow_and_upgrades.sql","04_schema.sql","05_schema.sql","06_schema.sql","07_schema.sql",
     "supabase/functions/admin-user-management/index.ts","supabase/functions/notification-dispatcher/index.ts","supabase/functions/scheduled-backup/index.ts",
     "tools/backup-decryptor.html","tools/vendor/jszip-3.10.1.min.js",
     "README_FIRST_FRESH_INSTALL.txt","QUICK_INSTALL_CHECKLIST.txt","SCHEMA_SEQUENCE_POLICY.txt","PROJECT_MANIFEST.json",
     "COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md","FINAL_BACKUP_AND_RESTORE_RUNBOOK.md",
     "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","RELEASE_NOTES_6_7_3_COMPACT_SCROLL_LISTS.txt","UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt","Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt","UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt","Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt"
+    "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt","UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt","Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_8_1_REPORT_WORKFLOW_CONTROL.txt","UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt","Report_Card_Enterprise_v6_8_1_VALIDATION_REPORT.txt"
   ]);
   const PACKAGE_LOGO_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
@@ -4278,7 +4354,7 @@
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
       <article><b>1</b><div><strong>Generate</strong><span>Enter the new school identity, upload its logo, and download the complete fresh package.</span></div></article>
-      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the eight schema files, deploy the three Edge Functions, and run SCHOOL_IDENTITY_SETUP.sql.</span></div></article>
+      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the nine schema files, deploy the three Edge Functions, and run SCHOOL_IDENTITY_SETUP.sql.</span></div></article>
       <article><b>3</b><div><strong>Create GitHub repository</strong><span>Upload only the contents of GITHUB_PAGES_FRONTEND to the repository root.</span></div></article>
       <article><b>4</b><div><strong>Enable GitHub Pages</strong><span>Publish from the main branch and root folder, then configure the final URL in Supabase Auth.</span></div></article>
     </div>`;
@@ -4351,14 +4427,14 @@
       .replace(/window\.NIS_CONFIG\?\.logoPath \|\| "[^"]*"/,'window.NIS_CONFIG?.logoPath || "assets/school-logo.png"');
   }
   function generatorConfigText(identity) {
-    return `// Generated by Report Card Enterprise v6.8.0 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
+    return `// Generated by Report Card Enterprise v6.8.1 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
   }
   function generatorIdentitySql(identity) {
     return `-- ${identity.schoolName} identity bootstrap\n-- Run after 06_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
   }
   function generatorReadme(identity) {
     const configured=Boolean(identity.supabaseUrl&&identity.supabaseKey);
-    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.8.0 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the eight SQL files in order, from 01_schema_foundation.sql through 06_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
+    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.8.1 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the nine SQL files in order, from 01_schema_foundation.sql through 07_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
   }
   function generatedIndexHtml(baseHtml,identity) {
     const safeName=esc(identity.schoolName);
@@ -4370,7 +4446,7 @@
       .replace(/<title>[\s\S]*?<\/title>/i,`<title>${safeName} | Report Cards</title>`);
   }
   function generatedServiceWorker(identity) {
-    const cache=`report-card-${slugify(identity.schoolName)}-v6-7-4-r1`;
+    const cache=`report-card-${slugify(identity.schoolName)}-v6-8-1-r1`;
     return `const CACHE_NAME=${JSON.stringify(cache)};\nconst STATIC_ASSETS=[\n  "./","index.html","style.css","app.js","config.js","manifest.webmanifest",\n  "assets/school-logo.png","assets/approved-terminal-report-template.png",\n  "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",\n  "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",\n  "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",\n  "assets/vendor/html2canvas-1.4.1.min.js"\n];\nself.addEventListener("install",event=>event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(STATIC_ASSETS)).then(()=>self.skipWaiting())));\nself.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));\nself.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.hostname.endsWith(".supabase.co")){event.respondWith(fetch(request).catch(()=>new Response(JSON.stringify({message:"offline"}),{status:503,headers:{"Content-Type":"application/json"}})));return;}if(url.pathname.endsWith("/config.js")){event.respondWith(fetch(request,{cache:"no-store"}).then(response=>{if(response.ok){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;}).catch(()=>caches.match(request)));return;}if(request.mode==="navigate"){event.respondWith(fetch(request).then(response=>{const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put("index.html",clone));return response;}).catch(()=>caches.match("index.html")));return;}event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{if(response.ok&&url.origin===self.location.origin){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;})));});\nself.addEventListener("sync",event=>{if(event.tag==="nis-outbox")event.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:"FLUSH_OUTBOX"}))));});\nself.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});\n`;
   }
   function generatedManifest(identity) {
@@ -4430,7 +4506,7 @@
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
       progressText.textContent="Converting school logo";const logoBlob=await packageLogoPng(byId("schoolPackageLogo").files?.[0]);
-      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.8.0`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
+      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.8.1`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
       progressText.textContent="Loading application files";
       const textFiles={};
       for(const path of REUSABLE_FRONTEND_TEXT_FILES)textFiles[path]=await fetchPackageFile(path,false);
@@ -4442,7 +4518,7 @@
       for(const path of REUSABLE_FRONTEND_BINARY_FILES){completed+=1;progressText.textContent=`Copying frontend assets ${completed}/${total}`;zip.file(`${frontend}/${path}`,await fetchPackageFile(path,true));}
       for(const path of REUSABLE_PACKAGE_SOURCE_FILES){completed+=1;progressText.textContent=`Copying Supabase and recovery files ${completed}/${total}`;const data=await fetchPackageFile(`package-source/${path}`,true);zip.file(`${root}/${path}`,data);zip.file(`${frontend}/package-source/${path}`,data);}
       zip.file(`${root}/SCHOOL_IDENTITY_SETUP.sql`,generatorIdentitySql(identity));zip.file(`${root}/GENERATED_PACKAGE_README.md`,generatorReadme(identity));
-      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.8.0",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
+      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.8.1",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
       progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_4_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
       toast("Reusable school package generated",emailDomainProvided?`${filename} is ready for the new school's separate Supabase and GitHub deployment.`:`${filename} is ready. A safe .invalid email-domain placeholder was added and can be changed later in Settings.`,"success",9000);setSync("online","Synced");
     } catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"reusable_school_package_generator"})}
