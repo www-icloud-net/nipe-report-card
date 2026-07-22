@@ -1,4 +1,4 @@
-# Report Card Enterprise v6.8.2 Reusable Schools Edition
+# Report Card Enterprise v6.9.0 Reusable Schools Edition
 
 ## Complete Fresh Setup: Supabase Dashboard to GitHub Pages
 
@@ -190,6 +190,13 @@ Expected backup schedules:
 - `nis-backup-verification`: `15 3 * * 0`
 
 If backup jobs are absent, verify the two Vault names and rerun `05_schema.sql`.
+
+
+## Platform Super Administrator and licensing
+
+After `07_schema.sql` succeeds, create a separate Supabase Authentication user for the software owner or licensing authority. Edit `PLATFORM_SUPER_ADMIN_SETUP.sql`, replace the email placeholder, and run the file in the SQL Editor. The account must complete authenticator-app MFA and will receive only the Platform Licensing portal. Do not convert the school’s only System Administrator.
+
+The default fresh-install licence is perpetual Enterprise so initial setup is not interrupted. Use the Platform Licensing portal to assign the intended plan, issue date, activation date, expiry date, grace period, status, and access-lock rules.
 
 ## 11. Create the first System Administrator
 

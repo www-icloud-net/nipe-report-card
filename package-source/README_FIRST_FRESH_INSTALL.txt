@@ -1,8 +1,8 @@
-REPORT CARD ENTERPRISE v6.8.2 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.9.0 REUSABLE SCHOOLS EDITION
 FRESH COMPLETE PACKAGE
 
 CURRENT STATUS
-- Built from the confirmed stable production baseline: v6.8.0 Reusable Schools Edition.
+- Built from the confirmed stable production baseline: v6.8.2 Reusable Schools Edition.
 - Student and staff directories retain deterministic alphabetical name ordering.
 - Teacher student visibility remains restricted to current students in officially assigned classes.
 - Approved Term 3 promotion changes the student's active placement only when promotion is applied.
@@ -48,6 +48,12 @@ IMPORTANT
 
 START HERE
 Read COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.
-For an existing v6.8.0 installation, read UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt.
+For an existing v6.8.2 installation, read UPGRADE_FROM_V6_8_2_TO_V6_9_0.txt.
 For package generation, read REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md.
 For continuity and recovery, read FINAL_BACKUP_AND_RESTORE_RUNBOOK.md.
+
+PLATFORM LICENSING
+- The fresh schema creates a safe perpetual Enterprise licence by default.
+- Create a separate Supabase Auth user for the software owner and run PLATFORM_SUPER_ADMIN_SETUP.sql after 07_schema.sql.
+- The Platform Super Administrator must complete MFA and receives only the Platform Licensing portal.
+- School System Administrators cannot grant or assume the platform role.

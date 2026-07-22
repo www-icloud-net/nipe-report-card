@@ -1,8 +1,8 @@
-REPORT CARD ENTERPRISE v6.8.2 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.9.0 REUSABLE SCHOOLS EDITION
 FRESH PACKAGE VALIDATION SUMMARY
 
-- Built from the confirmed stable v6.8.1 production baseline in a separate versioned copy.
-- SQL sequence remains 01 through 07; the v6.8.2 continuation is appended to 07_schema.sql.
+- Built from the confirmed stable v6.8.2 production baseline in a separate versioned copy.
+- SQL sequence remains 01 through 07; the v6.9.0 continuation is appended to 07_schema.sql.
 - Authenticated execution of can_publish_report is restored for Supabase Storage RLS evaluation.
 - Report PDF and report-card template policies use bucket-gated CASE expressions.
 - Class-teacher and System Administrator PDF authority is preserved.
@@ -10,3 +10,8 @@ FRESH PACKAGE VALIDATION SUMMARY
 - System Administrator template management remains role restricted.
 - Root and GitHub Pages frontend files are maintained as deployment mirrors.
 - Live production acceptance remains required after deployment.
+
+- Platform Super Administrator is isolated from academic portals and requires MFA.
+- Default licence is perpetual Enterprise and unlocked.
+- Licence lifecycle, capacity, restrictive RLS, write triggers, Storage guards, and Edge checks are present.
+- PLATFORM_SUPER_ADMIN_SETUP.sql is included.

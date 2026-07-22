@@ -1,8 +1,8 @@
 {
   "product": "Report Card Enterprise",
-  "version": "6.8.2 Reusable Schools Edition",
+  "version": "6.9.0 Reusable Schools Edition",
   "release_date": "2026-07-22",
-  "baseline": "Confirmed stable production v6.8.1 Reusable Schools Edition",
+  "baseline": "Confirmed stable production v6.8.2 Reusable Schools Edition",
   "edition": "Reusable Schools, Supabase Dashboard and GitHub Pages Edition",
   "database_files": [
     "01_schema_foundation.sql",
@@ -71,6 +71,15 @@
     "html2canvas": "1.4.1"
   },
   "final_build_improvements": [
+    "Separate Platform Super Administrator role with mandatory MFA and no academic navigation",
+    "Dedicated licensing control plane for plan, issue, activation, expiry, grace, suspension, revocation, and perpetual status",
+    "Targeted System Administrator, school-wide, and platform access locks with read-only or deny modes",
+    "Server-side licensing enforcement through restrictive RLS policies, write triggers, Storage policies, RPCs, and Edge Functions",
+    "Immutable licence-event and verification history",
+    "Server-enforced student, teacher, and System Administrator plan limits",
+    "Safe automatic perpetual Enterprise licence for existing installations",
+    "Licensing and compliance records included in encrypted backups",
+    "Protected PLATFORM_SUPER_ADMIN_SETUP.sql provisioning workflow",
     "Restored authenticated Storage-policy execution of can_publish_report without widening publication authority",
     "Bucket-gated report PDF and report-card template Storage policies that prevent cross-bucket authorization evaluation",
     "Working official PDF creation, registration, refresh, and latest-PDF availability for authorized class teachers and System Administrators",
@@ -148,12 +157,16 @@
     "Report_Card_Enterprise_v6_8_1_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_8_2_PDF_AND_TEMPLATE_STORAGE_FIX.txt",
     "UPGRADE_FROM_V6_8_1_TO_V6_8_2.txt",
-    "Report_Card_Enterprise_v6_8_2_VALIDATION_REPORT.txt"
+    "Report_Card_Enterprise_v6_8_2_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_9_0_PLATFORM_LICENSING_CONTROL.txt",
+    "UPGRADE_FROM_V6_8_2_TO_V6_9_0.txt",
+    "Report_Card_Enterprise_v6_9_0_VALIDATION_REPORT.txt",
+    "PLATFORM_SUPER_ADMIN_SETUP.sql"
   ],
   "verification_scope": {
     "package_level": "SQL lexical structure and workflow feature assertions, JavaScript and service-worker syntax, TypeScript transpilation syntax, JSON parsing, frontend mirror parity, reusable-generator source completeness, authorization assertions, checksum generation, and ZIP integrity testing",
     "not_available_in_build_environment": "Live execution against the school Supabase project, production Row Level Security acceptance, real-account browser workflows, email delivery, and scheduled Edge runtime execution",
-    "required_after_deployment": "Run the role-based Storage and PDF acceptance procedures in UPGRADE_FROM_V6_8_1_TO_V6_8_2.txt before declaring the deployment accepted"
+    "required_after_deployment": "Run the role, licence lifecycle, access-lock, capacity, backup, and continuity acceptance procedures in UPGRADE_FROM_V6_8_2_TO_V6_9_0.txt before declaring the deployment accepted."
   },
   "reusable_school_generator": {
     "navigation": "System Administrator > GitHub Navigator, immediately after Settings",
@@ -163,7 +176,8 @@
       "SCHOOL_IDENTITY_SETUP.sql",
       "Nine ordered SQL files",
       "Three Edge Functions",
-      "Recovery tools and guides"
+      "Recovery tools and guides",
+      "Platform Super Administrator setup script and licensing control plane"
     ],
     "branding": [
       "school name",

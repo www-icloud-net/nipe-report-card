@@ -1,0 +1,32 @@
+REPORT CARD ENTERPRISE v6.9.0
+PLATFORM SUPER ADMINISTRATOR AND LICENSING CONTROL
+
+Release type
+Major platform-governance and commercial licensing enhancement built from the confirmed v6.8.2 production baseline.
+
+Implemented
+1. Added a separate Platform Super Administrator role that is not available to school System Administrators.
+2. Added a dedicated Platform Licensing portal with mandatory MFA.
+3. Added licence plans, issue date, activation date, expiry date, grace-period end date, status, reference, compliance reason, and internal notes.
+4. Added Starter, Professional, and Enterprise plan definitions with enforceable student, teacher, and System Administrator capacity limits.
+5. Added active, pending activation, grace period, expired, suspended, revoked, and perpetual licence states.
+6. Added targeted access locks for the System Administrator, all school users, or the entire platform.
+7. Added read-only and deny-access lock modes, optional automatic lock expiry, release controls, and reasons.
+8. Added server-side licence enforcement through restrictive RLS policies, write triggers, RPC checks, Storage policies, and Edge Function checks.
+9. Preserved view and encrypted-backup access during ordinary expiry or suspension by using read-only mode.
+10. Added immutable licence event history and licence verification history.
+11. Added licence and compliance tables to encrypted scheduled backups.
+12. Added a protected one-time PLATFORM_SUPER_ADMIN_SETUP.sql account-provisioning script.
+13. Existing v6.8.2 installations automatically receive a perpetual Enterprise licence during upgrade, preventing unintended production interruption.
+14. Continued all SQL work in 07_schema.sql. No 08_schema.sql file was created.
+
+Security boundaries
+- Platform Super Administrators can manage licensing and access controls, but receive no academic navigation or school-record permissions.
+- School System Administrators cannot create, assign, or grant the Platform Super Administrator role.
+- Platform licensing actions require AAL2 multi-factor authentication.
+- Licence history is append-only.
+- Licence enforcement is server-side and cannot be bypassed merely by changing frontend JavaScript.
+- Service-role and trusted SQL maintenance paths remain available for recovery and deployment.
+
+Upgrade requirement
+Apply the appended v6.9.0 section of 07_schema.sql, deploy the updated frontend, redeploy admin-user-management and scheduled-backup, then provision a separate platform administrator with PLATFORM_SUPER_ADMIN_SETUP.sql.

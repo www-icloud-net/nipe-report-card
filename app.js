@@ -21,6 +21,7 @@
   });
 
   const ROLE_LABELS = {
+    platform_super_admin: "Platform Super Administrator",
     system_admin: "System Administrator",
     principal: "Principal (Headmaster/Headmistress)",
     class_teacher: "Class Teacher",
@@ -41,6 +42,7 @@
 
   const NAV = [
     {id:"dashboard",label:"Dashboard",icon:"▦",subtitle:"Academic performance overview"},
+    {id:"licensing",label:"Platform Licensing",icon:"◇",subtitle:"Licence plans, lifecycle, compliance, and access controls",roles:["platform_super_admin"]},
     {id:"my_class",label:"My Class",icon:"▣",subtitle:"Assigned class, learners, and report progress",roles:["class_teacher"]},
     {id:"attendance",label:"Attendance",icon:"✓",subtitle:"Daily class attendance and automatic term totals",roles:["class_teacher"]},
     {id:"my_subjects",label:"My Subjects",icon:"⌘",subtitle:"Assigned subjects, classes, and assessment progress",roles:["class_teacher","subject_teacher"]},
@@ -58,6 +60,7 @@
   ];
 
   const ROLE_NAV_IDS = Object.freeze({
+    platform_super_admin:["licensing"],
     system_admin:["dashboard","students","teachers","headteachers","academics","reports","users","notifications","audit","settings","github"],
     principal:["dashboard","reports","notifications"],
     class_teacher:["dashboard","my_class","attendance","my_subjects","students","reports","notifications"],
@@ -76,7 +79,8 @@
     workspace:null, studentClassFilter:"", reportClassFilter:"", reportTemplates:null, reportTemplatesLoadedAt:0,
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
     packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
-    attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null
+    attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null,
+    licenseConsole:null
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -96,6 +100,24 @@
   const activeTerm = () => state.boot?.terms?.find(x=>x.is_active) || null;
   const role = () => state.boot?.profile?.role || "";
   const can = key => Boolean(state.boot?.permissions?.[key]);
+  const licenseState = () => state.boot?.license || {};
+  const licenseCanWrite = () => licenseState().write_allowed !== false;
+  function dateTimeLocalValue(value) {
+    if(!value)return "";
+    const date=new Date(value);if(Number.isNaN(date.getTime()))return "";
+    const offset=date.getTimezoneOffset()*60000;
+    return new Date(date.getTime()-offset).toISOString().slice(0,16);
+  }
+  function licenseStatusLabel(value="") {
+    return ({pending_activation:"Pending activation",active:"Active",grace_period:"Grace period",expired:"Expired",suspended:"Suspended",revoked:"Revoked",perpetual:"Perpetual"})[value]||String(value||"Unknown").replaceAll("_"," ");
+  }
+  function licenseBannerHtml() {
+    if(role()==="platform_super_admin")return "";
+    const license=licenseState(),warning=String(license.warning||"").trim();
+    if(!warning&&license.access_mode!=="read_only")return "";
+    const readOnly=license.access_mode==="read_only";
+    return `<section class="license-banner ${readOnly?"restricted":"warning"}"><div><strong>${readOnly?"Read-only licensing mode":licenseStatusLabel(license.computed_status)}</strong><span>${esc(warning||"The platform licence requires attention.")}</span></div>${license.expires_at?`<small>Expiry: ${esc(isoDateTime(license.expires_at))}</small>`:""}</section>`;
+  }
   const isConfigured = () => /^https:\/\/.+\.supabase\.co$/i.test(CONFIG.supabaseUrl) && !CONFIG.supabaseAnonKey.startsWith("YOUR_");
   const legacyDefaultSchoolName = value => /^nipe international school$/i.test(String(value||"").trim());
   const legacyDefaultLogo = value => !value || /(?:^|\/)nipe-school-logo\.png(?:$|\?)/i.test(String(value));
@@ -218,6 +240,10 @@
   function friendlyError(error) {
     const msg=error?.message||String(error||"Operation failed");
     if(msg.includes("40001")||msg.includes("changed by another user")) return "Another user changed this record. The latest version has been loaded.";
+    if(msg.includes("PLATFORM_ACCESS_LOCKED:")) return msg.split("PLATFORM_ACCESS_LOCKED:").slice(1).join(":").trim()||"Platform access has been restricted.";
+    if(msg.includes("LICENSE_WRITE_RESTRICTED:")) return msg.split("LICENSE_WRITE_RESTRICTED:").slice(1).join(":").trim()||"The current licence permits read-only access.";
+    if(msg.includes("LICENSE_CAPACITY_REACHED:")) return msg.split("LICENSE_CAPACITY_REACHED:").slice(1).join(":").trim();
+    if(msg.toLowerCase().includes("platform super administrator access required")) return "Only a Platform Super Administrator can manage licensing and access controls.";
     if(msg.toLowerCase().includes("permission denied for function can_publish_report")) return "Apply the v6.8.2 continuation in 07_schema.sql, then reload the system.";
     if(msg.includes("42501")||msg.toLowerCase().includes("access denied")) return "You do not have permission to complete this operation.";
     if(msg.includes("student_reports_enrollment_id_key")||msg.includes("student_reports_enrollment_id_term_id_key")) return "The database still has a legacy report uniqueness rule. Apply the v6.6.1 database hotfix, then save the report again.";
@@ -539,6 +565,7 @@
     byId("userAvatar").textContent=(state.boot.profile.full_name||"N").trim().charAt(0).toUpperCase();
     document.documentElement.style.setProperty("--navy",school.primary_colour||"#082d70");
     document.documentElement.style.setProperty("--gold",school.accent_colour||"#f0b51d");
+    document.body.dataset.accessMode=licenseState().access_mode||"full";
   }
   function availableNavItems() {
     const ordered=ROLE_NAV_IDS[role()]||["dashboard"];
@@ -565,10 +592,11 @@
     const token=state.viewToken;
     try {
       const renderer={
-        dashboard:renderDashboard,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,reports:renderReports,
+        dashboard:renderDashboard,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,reports:renderReports,
         children:renderChildren,users:renderUsers,notifications:renderNotifications,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
       }[view];
       await renderer?.(token,force);
+      if(token===state.viewToken&&role()!=="platform_super_admin") {const banner=licenseBannerHtml();if(banner)byId("content")?.insertAdjacentHTML("afterbegin",banner);}
       if(token===state.viewToken) {setSync(state.online?"online":"offline",state.online?"Synced":"Offline");byId("content").focus();}
     } catch(error) {
       if(token!==state.viewToken)return;
@@ -827,7 +855,7 @@
     const rows=data.students||[],opened=Number(data.days_school_opened||0),marked=Boolean(data.register?.id);
     root.innerHTML=`
       <div class="panel-header"><div><h3>${esc(data.class?.name||"Assigned Class")}</h3><p>${isoDate(state.attendanceDate)} • ${marked?"Attendance already recorded":"New attendance register"}</p></div>
-        <div class="button-row"><button class="button outline small" id="attendanceAllPresent" type="button" ${rows.length?"":"disabled"}>Mark all present</button><button class="button primary" id="attendanceSave" type="button" ${rows.length?"":"disabled"}>Save attendance</button></div></div>
+        <div class="button-row"><button class="button outline small" id="attendanceAllPresent" type="button" ${rows.length&&licenseCanWrite()?"":"disabled"}>Mark all present</button><button class="button primary" id="attendanceSave" type="button" ${rows.length&&licenseCanWrite()?"":"disabled"}>Save attendance</button></div></div>
       <div class="panel-body">
         <div class="metric-row attendance-summary"><div class="metric"><span>Students</span><strong>${number(rows.length)}</strong></div><div class="metric"><span>School days recorded</span><strong>${number(opened)}</strong></div><div class="metric"><span>Selected date</span><strong>${esc(marked?"Recorded":"Not recorded")}</strong></div></div>
         ${rows.length?`<div class="table-wrap"><table><thead><tr><th>Student</th><th>Admission No.</th><th>Daily status</th><th>Term attendance</th></tr></thead><tbody>
@@ -3890,10 +3918,10 @@
     });
     if(error){
       let message=error.message||"User account operation failed";
-      try{const detail=await error.context?.json();if(detail?.error)message=String(detail.error)}catch(_){}
+      try{const detail=await error.context?.json();if(detail?.message)message=String(detail.message);else if(detail?.error)message=String(detail.error)}catch(_){}
       throw new Error(message.replaceAll("_"," "));
     }
-    if(data?.error)throw new Error(String(data.error).replaceAll("_"," "));
+    if(data?.error)throw new Error(String(data.message||data.error).replaceAll("_"," "));
     return data;
   }
   async function saveUserAccount(userId=null) {
@@ -4100,6 +4128,114 @@
     $$('[data-template-remove]').forEach(button=>button.onclick=()=>removeReportCardTemplate(button.dataset.templateRemove));
   }
 
+
+  function licenceLimitText(value) {return value==null?"Unlimited":number(value)}
+  function licenceUsageMetric(label,used,limit) {
+    const capped=limit!=null,ratio=capped&&Number(limit)>0?Math.min(100,Math.round(Number(used||0)/Number(limit)*100)):0;
+    return `<div class="metric"><span>${esc(label)}</span><strong>${number(used)}${capped?` / ${number(limit)}`:""}</strong>${capped?`<div class="progress compact"><span style="width:${ratio}%"></span></div>`:`<small>Unlimited by plan</small>`}</div>`;
+  }
+  function platformEventSummary(event) {
+    return ({license_initialized:"Licence initialized",license_updated:"Licence updated",access_lock_applied:"Access lock applied",access_lock_released:"Access lock released",platform_admin_provisioned:"Platform administrator provisioned"})[event.event_type]||String(event.event_type||"Event").replaceAll("_"," ");
+  }
+  async function renderLicensing(token,force=false) {
+    if(!can("manage_licenses"))throw new Error("Platform Super Administrator access required");
+    if(force||!state.licenseConsole)state.licenseConsole=await rpc("get_platform_license_console");
+    if(token!==state.viewToken)return;
+    const data=state.licenseConsole||{},snapshot=data.snapshot||{},license=data.license||{},plan=snapshot.plan||{};
+    const plans=data.plans||[],usage=data.usage||{},locks=data.active_locks||[],events=data.recent_events||[],admins=data.platform_admins||[];
+    const status=snapshot.computed_status||license.status||"unknown";
+    byId("content").innerHTML=`
+      <div class="page-head"><div><h3>Platform Licensing Control</h3><p>Manage the installation licence, compliance state, capacity, and access restrictions.</p></div><button class="button ghost" id="licenseRefresh">Refresh</button></div>
+      <section class="platform-control-hero ${snapshot.access_mode==='locked'?'locked':snapshot.access_mode==='read_only'?'restricted':'active'}">
+        <div><span>Current licence</span><h3>${esc(plan.name||"Unconfigured")}</h3><p>${esc(snapshot.license_reference||"No licence reference")}</p></div>
+        <div><span>Status</span><strong>${esc(licenseStatusLabel(status))}</strong><small>${esc(snapshot.access_lock_status||"unlocked")}</small></div>
+        <div><span>Issue date</span><strong>${esc(isoDate(snapshot.issued_on))}</strong><small>Activated ${esc(isoDateTime(snapshot.activated_at))}</small></div>
+        <div><span>Expiry</span><strong>${snapshot.expires_at?esc(isoDateTime(snapshot.expires_at)):"No expiry"}</strong><small>${snapshot.days_remaining==null?"Perpetual or unset":`${number(snapshot.days_remaining)} days remaining`}</small></div>
+      </section>
+      ${snapshot.warning?`<section class="license-banner ${snapshot.access_mode==='read_only'||snapshot.access_mode==='locked'?'restricted':'warning'}"><div><strong>Licence attention</strong><span>${esc(snapshot.warning)}</span></div></section>`:""}
+      <div class="grid two platform-license-grid">
+        <section class="panel pad">
+          <div class="section-title"><div><h4>Licence lifecycle</h4><p>Changes are effective immediately and recorded in immutable licensing history.</p></div></div>
+          <form id="platformLicenseForm" class="form-grid">
+            <label class="field"><span>Licence plan</span><select name="plan_id" required>${plans.map(item=>`<option value="${attr(item.id)}" ${item.id===license.plan_id?"selected":""}>${esc(item.name)}</option>`).join("")}</select></label>
+            <label class="field"><span>Licence status</span><select name="status">${["pending_activation","active","grace_period","expired","suspended","revoked","perpetual"].map(item=>`<option value="${item}" ${item===license.status?"selected":""}>${esc(licenseStatusLabel(item))}</option>`).join("")}</select></label>
+            <label class="field"><span>Issue date</span><input type="date" name="issued_on" value="${attr(license.issued_on||localDateValue())}" required></label>
+            <label class="field"><span>Activation date and time</span><input type="datetime-local" name="activated_at" value="${attr(dateTimeLocalValue(license.activated_at))}"></label>
+            <label class="field"><span>Expiry date and time</span><input type="datetime-local" name="expires_at" value="${attr(dateTimeLocalValue(license.expires_at))}"></label>
+            <label class="field"><span>Grace-period end</span><input type="datetime-local" name="grace_ends_at" value="${attr(dateTimeLocalValue(license.grace_ends_at))}"></label>
+            <label class="field full"><span>Licence reference</span><input name="license_reference" maxlength="100" value="${attr(license.license_reference||"")}" required></label>
+            <label class="field full"><span>Compliance reason</span><input name="compliance_reason" maxlength="500" value="${attr(license.compliance_reason||"")}" placeholder="Required when suspended or revoked"></label>
+            <label class="field full"><span>Internal notes</span><textarea name="notes">${esc(license.notes||"")}</textarea></label>
+            <div class="full button-row"><button class="button primary" id="platformLicenseSave" type="button">Save licence</button></div>
+          </form>
+        </section>
+        <section class="panel pad">
+          <div class="section-title"><div><h4>Plan capacity and features</h4><p>${esc(plan.description||"")}</p></div></div>
+          <div class="metric-row">
+            ${licenceUsageMetric("Active students",usage.active_students,plan.max_students)}
+            ${licenceUsageMetric("Active teachers",usage.active_teachers,plan.max_teachers)}
+            ${licenceUsageMetric("System administrators",usage.active_system_admins,plan.max_system_admins)}
+            <div class="metric"><span>Published reports</span><strong>${number(usage.published_reports)}</strong><small>Historical total</small></div>
+          </div>
+          <div class="hr"></div>
+          <div class="chip-list">${Object.entries(plan.feature_flags||{}).filter(([,enabled])=>enabled).map(([key])=>`<span class="chip">${esc(key.replaceAll("_"," "))}</span>`).join("")||'<span class="chip">No enabled features</span>'}</div>
+          <div class="template-information" style="margin-top:18px"><strong>Capacity enforcement</strong><span>Student, teacher, and System Administrator limits are enforced on the server. Existing records are never deleted when a limit or licence state changes.</span></div>
+        </section>
+        <section class="panel pad">
+          <div class="section-title"><div><h4>Access lock control</h4><p>Use read-only mode before a complete denial unless a serious compliance or security condition requires full restriction.</p></div></div>
+          <form id="platformLockForm" class="form-grid">
+            <label class="field"><span>Lock scope</span><select name="scope"><option value="system_admin">System Administrator only</option><option value="school">All school users</option><option value="platform">Entire school platform</option></select></label>
+            <label class="field"><span>Lock mode</span><select name="mode"><option value="read_only">Read-only</option><option value="deny">Deny access</option></select></label>
+            <label class="field full"><span>Reason</span><textarea name="reason" required placeholder="State the contractual, security, or compliance reason"></textarea></label>
+            <label class="field full"><span>Automatic end date and time (optional)</span><input type="datetime-local" name="ends_at"></label>
+            <div class="full button-row"><button class="button danger" id="platformLockApply" type="button">Apply access lock</button></div>
+          </form>
+          <div class="hr"></div>
+          <div class="section-title"><h4>Active locks</h4></div>
+          ${locks.length?`<div class="record-list">${locks.map(item=>`<article class="license-lock-row"><div><strong>${esc(item.lock_scope.replaceAll("_"," "))} • ${esc(item.lock_mode.replaceAll("_"," "))}</strong><span>${esc(item.reason)}</span><small>Applied ${esc(isoDateTime(item.created_at))}${item.ends_at?` • Ends ${esc(isoDateTime(item.ends_at))}`:""}</small></div><button class="button outline small" data-release-license-lock="${attr(item.id)}">Release</button></article>`).join("")}</div>`:`<div class="empty"><strong>No active access locks</strong></div>`}
+        </section>
+        <section class="panel pad">
+          <div class="section-title"><div><h4>Platform Super Administrators</h4><p>These accounts are isolated from school academic portals and must use multi-factor authentication.</p></div></div>
+          ${admins.length?`<div class="record-list">${admins.map(item=>`<article class="license-admin-row"><div><strong>${esc(item.full_name||"Platform administrator")}</strong><span>${esc(item.email||"")}</span><small>${item.active?"Active":"Inactive"} • MFA ${item.mfa_required?"required":"not configured"} • Last seen ${esc(isoDateTime(item.last_seen_at))}</small></div></article>`).join("")}</div>`:`<div class="empty"><strong>No Platform Super Administrator profile found</strong></div>`}
+          <div class="template-information"><strong>Account provisioning</strong><span>Create a separate Supabase Authentication user, then run PLATFORM_SUPER_ADMIN_SETUP.sql with that user’s email. School System Administrators cannot grant themselves this role.</span></div>
+        </section>
+      </div>
+      <section class="panel">
+        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 100 immutable platform events</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Actor</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(platformEventSummary(item))}</strong></td><td>${esc(item.event_reason||"—")}</td><td>${esc(item.actor_name||item.actor_id||"System")}</td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No licensing events recorded</div></td></tr>`}</tbody></table></div>
+      </section>`;
+    byId("licenseRefresh").onclick=()=>{state.licenseConsole=null;renderLicensing(state.viewToken,true)};
+    byId("platformLicenseSave").onclick=savePlatformLicense;
+    byId("platformLockApply").onclick=applyPlatformAccessLock;
+    $$('[data-release-license-lock]').forEach(button=>button.onclick=()=>releasePlatformAccessLock(button.dataset.releaseLicenseLock));
+  }
+  async function savePlatformLicense() {
+    const form=byId("platformLicenseForm"),button=byId("platformLicenseSave");if(!form?.reportValidity())return;
+    const values=formObject(form);button.disabled=true;button.textContent="Saving";
+    try{
+      const payload={target_plan_id:values.plan_id,target_status:values.status,issue_date:values.issued_on,
+        activation_date:values.activated_at?new Date(values.activated_at).toISOString():null,
+        expiry_date:values.expires_at?new Date(values.expires_at).toISOString():null,
+        grace_end_date:values.grace_ends_at?new Date(values.grace_ends_at).toISOString():null,
+        license_reference_text:values.license_reference.trim(),notes_text:values.notes.trim(),compliance_reason_text:values.compliance_reason.trim()};
+      if(["suspended","revoked"].includes(values.status)&&payload.compliance_reason_text.length<5)throw new Error("Enter a clear compliance reason for a suspended or revoked licence.");
+      state.licenseConsole=await rpc("platform_update_license",payload);state.boot=await rpc("get_bootstrap_data");renderBrand();toast("Platform licence updated");await renderLicensing(state.viewToken);
+    }catch(error){toast("Licence not updated",friendlyError(error),"error",7500)}finally{button.disabled=false;button.textContent="Save licence"}
+  }
+  async function applyPlatformAccessLock() {
+    const form=byId("platformLockForm"),button=byId("platformLockApply");if(!form?.reportValidity())return;
+    const values=formObject(form);if(values.reason.trim().length<5){toast("Lock not applied","Enter a clear reason.","error");return}
+    const ok=await confirmAction("Apply access lock",`Apply ${values.mode.replaceAll("_"," ")} access to ${values.scope.replaceAll("_"," ")}?`,"Apply lock",true);if(!ok)return;
+    button.disabled=true;button.textContent="Applying";
+    try{state.licenseConsole=await rpc("platform_set_access_lock",{lock_scope_text:values.scope,lock_mode_text:values.mode,reason_text:values.reason.trim(),ends_at_value:values.ends_at?new Date(values.ends_at).toISOString():null});toast("Access lock applied");await renderLicensing(state.viewToken)}
+    catch(error){toast("Lock not applied",friendlyError(error),"error",7500)}finally{button.disabled=false;button.textContent="Apply access lock"}
+  }
+  async function releasePlatformAccessLock(lockId) {
+    const ok=await confirmAction("Release access lock","School access will return to the level allowed by the current licence status.","Release lock");if(!ok)return;
+    try{state.licenseConsole=await rpc("platform_release_access_lock",{target_lock_id:lockId,reason_text:"Access lock released through the Platform Licensing portal"});toast("Access lock released");await renderLicensing(state.viewToken)}
+    catch(error){toast("Lock not released",friendlyError(error),"error",7500)}
+  }
+
   async function renderSettings(token) {
     const school=state.boot.school||{};
     let health=null,readiness=null,backupData=null,templates=[],templateLoadError="";
@@ -4304,7 +4440,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.8.2 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.9.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4348,7 +4484,8 @@
     "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt","UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt","Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt",
     "RELEASE_NOTES_6_8_1_REPORT_WORKFLOW_CONTROL.txt","UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt","Report_Card_Enterprise_v6_8_1_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_8_2_PDF_AND_TEMPLATE_STORAGE_FIX.txt","UPGRADE_FROM_V6_8_1_TO_V6_8_2.txt","Report_Card_Enterprise_v6_8_2_VALIDATION_REPORT.txt"
+    "RELEASE_NOTES_6_8_2_PDF_AND_TEMPLATE_STORAGE_FIX.txt","UPGRADE_FROM_V6_8_1_TO_V6_8_2.txt","Report_Card_Enterprise_v6_8_2_VALIDATION_REPORT.txt",
+    "RELEASE_NOTES_6_9_0_PLATFORM_LICENSING_CONTROL.txt","UPGRADE_FROM_V6_8_2_TO_V6_9_0.txt","Report_Card_Enterprise_v6_9_0_VALIDATION_REPORT.txt","PLATFORM_SUPER_ADMIN_SETUP.sql"
   ]);
   const PACKAGE_LOGO_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
@@ -4356,7 +4493,7 @@
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
       <article><b>1</b><div><strong>Generate</strong><span>Enter the new school identity, upload its logo, and download the complete fresh package.</span></div></article>
-      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the nine schema files, deploy the three Edge Functions, and run SCHOOL_IDENTITY_SETUP.sql.</span></div></article>
+      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the nine schema files, deploy the three Edge Functions, run SCHOOL_IDENTITY_SETUP.sql, then provision the separate Platform Super Administrator.</span></div></article>
       <article><b>3</b><div><strong>Create GitHub repository</strong><span>Upload only the contents of GITHUB_PAGES_FRONTEND to the repository root.</span></div></article>
       <article><b>4</b><div><strong>Enable GitHub Pages</strong><span>Publish from the main branch and root folder, then configure the final URL in Supabase Auth.</span></div></article>
     </div>`;
@@ -4429,14 +4566,14 @@
       .replace(/window\.NIS_CONFIG\?\.logoPath \|\| "[^"]*"/,'window.NIS_CONFIG?.logoPath || "assets/school-logo.png"');
   }
   function generatorConfigText(identity) {
-    return `// Generated by Report Card Enterprise v6.8.2 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
+    return `// Generated by Report Card Enterprise v6.9.0 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
   }
   function generatorIdentitySql(identity) {
     return `-- ${identity.schoolName} identity bootstrap\n-- Run after 06_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
   }
   function generatorReadme(identity) {
     const configured=Boolean(identity.supabaseUrl&&identity.supabaseKey);
-    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.8.2 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the nine SQL files in order, from 01_schema_foundation.sql through 07_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
+    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.9.0 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the nine SQL files in order, from 01_schema_foundation.sql through 07_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n12. Create a separate platform-owner Auth user, edit PLATFORM_SUPER_ADMIN_SETUP.sql with that email, run it, and complete mandatory MFA.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
   }
   function generatedIndexHtml(baseHtml,identity) {
     const safeName=esc(identity.schoolName);
@@ -4508,7 +4645,7 @@
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
       progressText.textContent="Converting school logo";const logoBlob=await packageLogoPng(byId("schoolPackageLogo").files?.[0]);
-      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.8.2`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
+      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.9.0`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
       progressText.textContent="Loading application files";
       const textFiles={};
       for(const path of REUSABLE_FRONTEND_TEXT_FILES)textFiles[path]=await fetchPackageFile(path,false);
@@ -4520,7 +4657,7 @@
       for(const path of REUSABLE_FRONTEND_BINARY_FILES){completed+=1;progressText.textContent=`Copying frontend assets ${completed}/${total}`;zip.file(`${frontend}/${path}`,await fetchPackageFile(path,true));}
       for(const path of REUSABLE_PACKAGE_SOURCE_FILES){completed+=1;progressText.textContent=`Copying Supabase and recovery files ${completed}/${total}`;const data=await fetchPackageFile(`package-source/${path}`,true);zip.file(`${root}/${path}`,data);zip.file(`${frontend}/package-source/${path}`,data);}
       zip.file(`${root}/SCHOOL_IDENTITY_SETUP.sql`,generatorIdentitySql(identity));zip.file(`${root}/GENERATED_PACKAGE_README.md`,generatorReadme(identity));
-      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.8.1",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
+      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.9.0",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
       progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_4_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
       toast("Reusable school package generated",emailDomainProvided?`${filename} is ready for the new school's separate Supabase and GitHub deployment.`:`${filename} is ready. A safe .invalid email-domain placeholder was added and can be changed later in Settings.`,"success",9000);setSync("online","Synced");
     } catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"reusable_school_package_generator"})}

@@ -96,6 +96,11 @@ Deno.serve(async (request) => {
   if (actorError || !actor?.active || !["system_admin", "admin"].includes(actor.role)) {
     return response({ error: "access_denied" }, 403);
   }
+  const { data: licenceAccess, error: licenceError } = await service.rpc("license_access_for_actor", { actor_id: actorId });
+  if (licenceError) return response({ error: "licence_check_failed", message: licenceError.message }, 503);
+  if (licenceAccess?.write_allowed !== true) {
+    return response({ error: "licence_write_restricted", message: licenceAccess?.warning ?? "The current licence does not permit account changes." }, 403);
+  }
   const jwt = decodeJwtPayload(token);
   if (actor.mfa_required && jwt.aal !== "aal2") return response({ error: "mfa_required" }, 403);
 
@@ -117,6 +122,24 @@ Deno.serve(async (request) => {
   const mfaRequired = payload.mfa_required === true;
   const mustChangePassword = payload.must_change_password === true || payload.force_password_change === true;
   const access = normalizeAccess(payload.access);
+  const targetUserId = String(payload.user_id ?? "").trim();
+
+  // Platform Super Administrator accounts are outside school administration.
+  // Even a manually crafted System Administrator request cannot update, delete,
+  // deactivate, demote, or reset one through this Edge Function.
+  if (targetUserId && ["update", "delete", "reset_password"].includes(action)) {
+    const { data: protectedTarget, error: protectedTargetError } = await service
+      .from("profiles")
+      .select("id, role")
+      .eq("id", targetUserId)
+      .maybeSingle();
+    if (protectedTargetError) {
+      return response({ error: "target_account_check_failed", message: protectedTargetError.message }, 503);
+    }
+    if (protectedTarget?.role === "platform_super_admin") {
+      return response({ error: "platform_account_protected", message: "Platform Super Administrator accounts require the protected SQL provisioning path." }, 403);
+    }
+  }
 
   if (["principal", "class_teacher", "subject_teacher"].includes(role)) {
     if (!staffRecordId) return response({ error: "staff_record_required" }, 400);
@@ -137,6 +160,20 @@ Deno.serve(async (request) => {
   if (["create", "update"].includes(action)) {
     if (!fullName || !allowedRoles.has(role)) {
       return response({ error: "invalid_account_details" }, 400);
+    }
+    if (role === "system_admin" && active) {
+      const limit = Number(licenceAccess?.plan?.max_system_admins ?? 0);
+      if (Number.isFinite(limit) && limit > 0) {
+        const targetId = String(payload.user_id ?? "").trim();
+        let countQuery = service.from("profiles").select("id", { count: "exact", head: true })
+          .eq("active", true).in("role", ["system_admin", "admin"]);
+        if (targetId) countQuery = countQuery.neq("id", targetId);
+        const { count, error: countError } = await countQuery;
+        if (countError) return response({ error: "licence_capacity_check_failed", message: countError.message }, 503);
+        if ((count ?? 0) >= limit) {
+          return response({ error: "licence_capacity_reached", message: `The current plan permits a maximum of ${limit} active System Administrators.` }, 409);
+        }
+      }
     }
   }
 

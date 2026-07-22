@@ -20,7 +20,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
-const SCHEMA_VERSION = "6.8.1";
+const SCHEMA_VERSION = "6.9.0";
 const BACKUP_FORMAT_VERSION = 2;
 const BACKUP_BUCKET = "system-backups";
 const SOURCE_BUCKETS = [
@@ -58,6 +58,11 @@ const TABLES = [
   "report_revisions",
   "report_publications",
   "report_card_templates",
+  "license_plans",
+  "school_licenses",
+  "platform_access_locks",
+  "license_events",
+  "license_verification_logs",
   "notifications",
   "notification_outbox",
   "import_batches",
@@ -181,6 +186,9 @@ async function authorise(
   if (profileError || !profile || !profile.active || profile.role !== "system_admin") {
     throw new Error("access denied");
   }
+  const { data: licenceAccess, error: licenceError } = await service.rpc("license_access_for_actor", { actor_id: userData.user.id });
+  if (licenceError) throw new Error(`licence check failed: ${licenceError.message}`);
+  if (licenceAccess?.read_allowed !== true) throw new Error("platform access locked");
   return { actorId: userData.user.id, mode: "manual" };
 }
 

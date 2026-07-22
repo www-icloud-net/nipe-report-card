@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v6.8.2 QUICK INSTALL CHECKLIST
+REPORT CARD ENTERPRISE v6.9.0 QUICK INSTALL CHECKLIST
 
 FRESH INSTALL
 [ ] Create a new Supabase project.
@@ -28,10 +28,17 @@ FRESH INSTALL
 [ ] Verify subject teachers cannot submit or publish reports.
 [ ] Run and verify an encrypted backup.
 
-UPGRADE FROM v6.8.0
-[ ] Preserve the v6.8.0 rollback ZIP.
+UPGRADE FROM v6.8.2
+[ ] Preserve the v6.8.2 rollback ZIP.
 [ ] Create a verified encrypted backup.
 [ ] Run 07_schema.sql only.
-[ ] Redeploy scheduled-backup for v6.8.2 metadata.
-[ ] Deploy the v6.8.2 frontend while preserving config.js.
-[ ] Complete all acceptance tests in UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt.
+[ ] Redeploy scheduled-backup for v6.9.0 metadata.
+[ ] Deploy the v6.9.0 frontend while preserving config.js.
+[ ] Complete all acceptance tests in UPGRADE_FROM_V6_8_2_TO_V6_9_0.txt.
+
+PLATFORM LICENSING
+[ ] Create a separate platform-owner Auth user.
+[ ] Run PLATFORM_SUPER_ADMIN_SETUP.sql with the exact platform-owner email.
+[ ] Complete mandatory MFA.
+[ ] Confirm the platform account sees only Platform Licensing.
+[ ] Test licence warning, read-only, deny, release, and backup continuity behaviour.
