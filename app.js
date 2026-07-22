@@ -56,12 +56,12 @@
     {id:"notifications",label:"Notifications",icon:"◆",subtitle:"School and workflow alerts"},
     {id:"audit",label:"Audit Trail",icon:"◎",subtitle:"Record changes and accountability",permission:"view_audit"},
     {id:"settings",label:"Settings",icon:"⚙",subtitle:"School identity, security, and resilience",roles:["system_admin"]},
-    {id:"github",label:"GitHub Navigator",icon:"⌁",subtitle:"Generate and deploy a reusable school package",roles:["system_admin"]}
+    {id:"github",label:"GitHub Navigator",icon:"⌁",subtitle:"Protected package generation and deployment controls",roles:["platform_super_admin"]}
   ];
 
   const ROLE_NAV_IDS = Object.freeze({
-    platform_super_admin:["licensing"],
-    system_admin:["dashboard","students","teachers","headteachers","academics","reports","users","notifications","audit","settings","github"],
+    platform_super_admin:["licensing","github"],
+    system_admin:["dashboard","students","teachers","headteachers","academics","reports","users","notifications","audit","settings"],
     principal:["dashboard","reports","notifications"],
     class_teacher:["dashboard","my_class","attendance","my_subjects","students","reports","notifications"],
     subject_teacher:["dashboard","my_subjects","students","reports","notifications"],
@@ -80,7 +80,7 @@
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
     packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
     attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null,
-    licenseConsole:null
+    licenseConsole:null, platformPackageConsole:null
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -440,7 +440,7 @@
   async function logout() {
     disconnectRealtime();
     await state.client?.auth.signOut();
-    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;
+    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;
     state.templateUrls.clear();state.templateCanvases.clear();
     showOnly("authView");setLoading(false);
   }
@@ -4440,7 +4440,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.9.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.9.1 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4465,83 +4465,121 @@
   }
 
 
-  const REUSABLE_FRONTEND_TEXT_FILES=Object.freeze(["index.html","style.css","app.js"]);
-  const REUSABLE_FRONTEND_BINARY_FILES=Object.freeze([
-    "assets/approved-terminal-report-template.png",
-    "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",
-    "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",
-    "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",
-    "assets/vendor/html2canvas-1.4.1.min.js"
-  ]);
-  const REUSABLE_PACKAGE_SOURCE_FILES=Object.freeze([
-    "01_schema_foundation.sql","02_schema_operations.sql","03A_schema_hardening_persistence_and_jobs.sql",
-    "03B1_schema_staff_academics_and_signatures.sql","03B2_schema_governance_workflow_and_upgrades.sql","04_schema.sql","05_schema.sql","06_schema.sql","07_schema.sql",
-    "supabase/functions/admin-user-management/index.ts","supabase/functions/notification-dispatcher/index.ts","supabase/functions/scheduled-backup/index.ts",
-    "tools/backup-decryptor.html","tools/vendor/jszip-3.10.1.min.js",
-    "README_FIRST_FRESH_INSTALL.txt","QUICK_INSTALL_CHECKLIST.txt","SCHEMA_SEQUENCE_POLICY.txt","PROJECT_MANIFEST.json",
-    "COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md","FINAL_BACKUP_AND_RESTORE_RUNBOOK.md",
-    "REUSABLE_SCHOOL_PACKAGE_GENERATOR_GUIDE.md","RELEASE_NOTES_6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","UPGRADE_FROM_V6_7_1_TO_V6_7_2_OPTIONAL_EMAIL_DOMAIN.txt","RELEASE_NOTES_6_7_3_COMPACT_SCROLL_LISTS.txt","UPGRADE_FROM_V6_7_2_TO_V6_7_3_COMPACT_SCROLL_LISTS.txt","Report_Card_Enterprise_v6_7_3_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","UPGRADE_FROM_V6_7_3_TO_V6_7_4_COMPACT_REPORTS_AND_BULK_DOWNLOADS.txt","Report_Card_Enterprise_v6_7_4_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_8_0_ATTENDANCE_AND_CLASS_SECURITY.txt","UPGRADE_FROM_V6_7_4_TO_V6_8_0.txt","Report_Card_Enterprise_v6_8_0_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_8_1_REPORT_WORKFLOW_CONTROL.txt","UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt","Report_Card_Enterprise_v6_8_1_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_8_2_PDF_AND_TEMPLATE_STORAGE_FIX.txt","UPGRADE_FROM_V6_8_1_TO_V6_8_2.txt","Report_Card_Enterprise_v6_8_2_VALIDATION_REPORT.txt",
-    "RELEASE_NOTES_6_9_0_PLATFORM_LICENSING_CONTROL.txt","UPGRADE_FROM_V6_8_2_TO_V6_9_0.txt","Report_Card_Enterprise_v6_9_0_VALIDATION_REPORT.txt","PLATFORM_SUPER_ADMIN_SETUP.sql"
-  ]);
-  const PACKAGE_LOGO_TYPES=new Set(["image/png","image/jpeg","image/webp"]);
+  const PACKAGE_LOGO_TYPES=new Set(["image/png"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
+  const PACKAGE_TEMPLATE_MAX_BYTES=20*1024*1024;
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Generate</strong><span>Enter the new school identity, upload its logo, and download the complete fresh package.</span></div></article>
-      <article><b>2</b><div><strong>Configure Supabase</strong><span>Run the nine schema files, deploy the three Edge Functions, run SCHOOL_IDENTITY_SETUP.sql, then provision the separate Platform Super Administrator.</span></div></article>
-      <article><b>3</b><div><strong>Create GitHub repository</strong><span>Upload only the contents of GITHUB_PAGES_FRONTEND to the repository root.</span></div></article>
-      <article><b>4</b><div><strong>Enable GitHub Pages</strong><span>Publish from the main branch and root folder, then configure the final URL in Supabase Auth.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v6.9.1 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
+      <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
+      <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
     </div>`;
   }
 
-  async function renderGithubNavigator(token) {
+  async function invokePlatformPackageManager(action,payload={}) {
+    if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
+    const {data,error}=await state.client.functions.invoke("platform-package-manager",{body:{action,...payload}});
+    if(error){let detail=null;try{detail=await error.context?.json?.()}catch(_){}throw new Error(detail?.error||data?.error||error.message||"Platform package service unavailable")}
+    if(!data?.ok)throw new Error(data?.error||"Platform package operation failed");
+    return data;
+  }
+
+  function readFileAsDataUrl(file,maxBytes,allowedTypes=null) {
+    return new Promise((resolve,reject)=>{
+      if(!file){reject(new Error("Select the required file."));return}
+      if(maxBytes&&file.size>maxBytes){reject(new Error(`File must not exceed ${readableBytes(maxBytes)}.`));return}
+      if(allowedTypes&&!allowedTypes.has(file.type)){reject(new Error("The selected file type is not permitted."));return}
+      const reader=new FileReader();reader.onerror=()=>reject(new Error("The selected file could not be read."));reader.onload=()=>resolve(String(reader.result||""));reader.readAsDataURL(file);
+    });
+  }
+
+  function platformPackageStatusLabel(value="") {
+    if(value==="ready")return '<span class="status approved">Ready</span>';
+    if(value==="revoked")return '<span class="status rejected">Revoked</span>';
+    return `<span class="status draft">${esc(value||"Unknown")}</span>`;
+  }
+
+  async function renderGithubNavigator(token,force=false) {
+    if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
+    if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status");
     if(token!==state.viewToken)return;
-    const currentSchool=schoolDisplayName();
+    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[];
     byId("content").innerHTML=`
-      <div class="page-head"><div><h3>GitHub Navigator</h3><p>Create a separate, fully branded Report Card Enterprise package for another school</p></div></div>
+      <div class="page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
+      <section class="license-banner warning"><div><strong>Protected platform operation</strong><span>School System Administrators cannot view this section, call the package service, access private package buckets, or download reusable source packages.</span></div></section>
       <div class="grid two package-generator-layout">
-        <section class="panel pad">
-          <div class="section-title"><div><h4>Reusable School Package Generator</h4><p>The generated ZIP does not modify this school. It contains a complete fresh Supabase package and a GitHub Pages frontend branded for the new school.</p></div></div>
-          <form id="schoolPackageForm" class="form-grid">
-            <label class="field full"><span>New school name</span><input name="school_name" maxlength="120" placeholder="Example Academy" required></label>
-            <label class="field"><span>Short application name</span><input name="short_name" maxlength="30" placeholder="Example Reports"></label>
-            <label class="field"><span>Report number prefix</span><input name="report_prefix" maxlength="12" placeholder="EA" required></label>
-            <label class="field full"><span>User account email domain <em>(optional)</em></span><input name="email_domain" placeholder="school.edu.gh (optional)"><small>Enter only a domain, such as school.edu.gh. Leave blank to use a safe non-deliverable .invalid placeholder. It can be changed later under Settings before email delivery is enabled.</small></label>
-            <label class="field full"><span>School logo</span><input id="schoolPackageLogo" name="school_logo" type="file" accept="image/png,image/jpeg,image/webp" required><small>PNG, JPEG, or WebP. Maximum 5 MB. The generator converts the image to a deployment-ready PNG.</small></label>
-            <div class="package-logo-preview full"><img id="schoolPackageLogoPreview" src="${CONFIG.logoPath}" alt="Package logo preview"><div><strong id="schoolPackageNamePreview">New school package</strong><span>The generated package will use this name and logo on login, MFA, sidebar, verification, reports, manifest, and browser icons.</span></div></div>
-            <label class="field full"><span>GitHub repository name</span><input name="repository_name" maxlength="80" placeholder="example-academy-report-card" required></label>
-            <label class="field full"><span>Supabase Project URL (optional)</span><input name="supabase_url" placeholder="https://your-project.supabase.co"><small>Leave blank to generate a placeholder config.js for the new school.</small></label>
-            <label class="field full"><span>Supabase Publishable key (optional)</span><input name="supabase_key" placeholder="sb_publishable_..."><small>Only a browser-safe Publishable key may be included. Secret and service-role keys are rejected.</small></label>
-            <div class="full template-information"><strong>Current installation protected</strong><span>${esc(currentSchool)} remains unchanged. The generator performs all branding and packaging in your browser.</span></div>
-            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button">Generate complete school package</button></div>
-            <div id="packageGeneratorProgress" class="generator-progress full hidden" aria-live="polite"><span class="spinner small"></span><strong>Preparing package</strong><span id="packageGeneratorProgressText">Validating school identity</span></div>
-          </form>
-        </section>
         <div class="grid">
-          <section class="panel pad"><div class="section-title"><div><h4>GitHub Deployment Navigator</h4><p>Use these shortcuts after downloading the generated ZIP.</p></div></div>
+          <section class="panel pad">
+            <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v6_9_1.zip before generating a school package.</span></div>`}
+            <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
+              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
+              <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
+            </form>
+          </section>
+          <section class="panel pad"><div class="section-title"><div><h4>Deployment Navigator</h4><p>Use these links only after generating and downloading an authorized package.</p></div></div>
             ${githubNavigatorStepsHtml()}
             <div class="github-link-grid">
               <a class="github-link-card" href="https://github.com/new" target="_blank" rel="noopener"><strong>Create GitHub repository</strong><span>Open GitHub's new repository page</span></a>
               <a class="github-link-card" href="https://github.com/settings/pages" target="_blank" rel="noopener"><strong>GitHub Pages settings</strong><span>Open account Pages settings</span></a>
-              <a class="github-link-card" href="https://supabase.com/dashboard/projects" target="_blank" rel="noopener"><strong>Supabase projects</strong><span>Create or open the new school's project</span></a>
+              <a class="github-link-card" href="https://supabase.com/dashboard/projects" target="_blank" rel="noopener"><strong>Supabase projects</strong><span>Create or open the licensed school's project</span></a>
             </div>
           </section>
-          <section class="panel pad"><div class="section-title"><h4>Generated Package Contents</h4></div>
-            <div class="diff-row"><span>Eight ordered database schema files</span><b>Included</b></div>
-            <div class="diff-row"><span>Three Supabase Edge Functions</span><b>Included</b></div>
-            <div class="diff-row"><span>Branded GitHub Pages frontend</span><b>Included</b></div>
-            <div class="diff-row"><span>School identity SQL</span><b>Included</b></div>
-            <div class="diff-row"><span>Backup decryptor and recovery guide</span><b>Included</b></div>
-            <div class="diff-row"><span>Deployment instructions</span><b>Included</b></div>
-          </section>
         </div>
-      </div>`;
+        <section class="panel pad">
+          <div class="section-title"><div><h4>Generate licensed school package</h4><p>Generation occurs inside the protected Edge Function. A signed manifest and immutable audit event are created.</p></div></div>
+          <form id="schoolPackageForm" class="form-grid">
+            <label class="field full"><span>New school name</span><input name="school_name" maxlength="120" placeholder="Example Academy" required></label>
+            <label class="field"><span>Short application name</span><input name="short_name" maxlength="30" placeholder="Example Reports"></label>
+            <label class="field"><span>Report number prefix</span><input name="report_prefix" maxlength="12" placeholder="EA" required></label>
+            <label class="field"><span>Tenant code</span><input name="tenant_code" maxlength="60" placeholder="EA-001" required></label>
+            <label class="field"><span>Licence reference</span><input name="license_reference" maxlength="80" placeholder="RCE-... (optional)"></label>
+            <label class="field"><span>Licence plan</span><select name="license_plan_code"><option value="starter">Starter</option><option value="professional">Professional</option><option value="enterprise" selected>Enterprise</option></select></label>
+            <label class="field"><span>Initial licence status</span><select name="license_status"><option value="pending_activation" selected>Pending activation</option><option value="active">Active</option><option value="perpetual">Perpetual</option></select></label>
+            <label class="field"><span>Issue date</span><input name="issued_on" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
+            <label class="field"><span>Expiry date and time (optional)</span><input name="expires_at" type="datetime-local"></label>
+            <label class="field full"><span>Authorized deployment domain (optional)</span><input name="authorized_domain" placeholder="reports.school.edu.gh"><small>Stored in the package binding metadata for compliance and redistribution tracing.</small></label>
+            <label class="field full"><span>User account email domain (optional)</span><input name="email_domain" placeholder="school.edu.gh"><small>Leave blank to use a safe non-deliverable .invalid placeholder.</small></label>
+            <label class="field full"><span>School logo</span><input id="schoolPackageLogo" name="school_logo" type="file" accept="image/png" required><small>PNG only. Maximum 5 MB. Use a square image of at least 256 by 256 pixels.</small></label>
+            <div class="package-logo-preview full"><img id="schoolPackageLogoPreview" src="${CONFIG.logoPath}" alt="Package logo preview"><div><strong id="schoolPackageNamePreview">New school package</strong><span>The official package is generated and signed on the server.</span></div></div>
+            <label class="field full"><span>GitHub repository name</span><input name="repository_name" maxlength="80" placeholder="example-academy-report-card" required></label>
+            <label class="field full"><span>Supabase Project URL (optional)</span><input name="supabase_url" placeholder="https://your-project.supabase.co"></label>
+            <label class="field full"><span>Supabase Publishable key (optional)</span><input name="supabase_key" placeholder="sb_publishable_..."><small>Secret and service-role keys are rejected by the server.</small></label>
+            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template?"":"disabled"}>Generate protected package</button></div>
+            <div id="packageGeneratorProgress" class="generator-progress full hidden" aria-live="polite"><span class="spinner small"></span><strong>Generating package</strong><span id="packageGeneratorProgressText">Authorizing platform session</span></div>
+          </form>
+        </section>
+      </div>
+      <section class="panel" style="margin-top:18px">
+        <div class="panel-header"><div><h3>Generated package register</h3><p>Private artifacts and authorized-download history</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th></th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td>${esc(item.filename)}<br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact"><button class="button secondary small" data-package-download="${attr(item.id)}" ${item.status!=="ready"?"disabled":""}>Download</button><button class="button danger small" data-package-revoke="${attr(item.id)}" ${item.status!=="ready"?"disabled":""}>Revoke</button></div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
+      </section>
+      <section class="panel" style="margin-top:18px">
+        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 100 append-only package events</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Details</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(String(item.event_type||"").replaceAll("_"," "))}</strong></td><td>${esc(item.event_reason||"—")}</td><td><small>${esc(JSON.stringify(item.event_data||{}))}</small></td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No package events recorded</div></td></tr>`}</tbody></table></div>
+      </section>`;
     bindGithubNavigator();
+  }
+
+  function bindGithubNavigator() {
+    byId("platformPackageRefresh").onclick=()=>{state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
+    byId("platformTemplateUpload").onclick=uploadPlatformPackageTemplate;
+    const form=byId("schoolPackageForm"),nameInput=form.elements.school_name,shortInput=form.elements.short_name,prefixInput=form.elements.report_prefix,repoInput=form.elements.repository_name,tenantInput=form.elements.tenant_code,logoInput=byId("schoolPackageLogo");
+    const syncSuggestions=()=>{
+      const name=nameInput.value.trim();byId("schoolPackageNamePreview").textContent=name||"New school package";
+      if(!shortInput.value.trim()||shortInput.dataset.auto==="true"){shortInput.value=name?`${suggestedPrefix(name)} Reports`:"";shortInput.dataset.auto="true"}
+      if(!prefixInput.value.trim()||prefixInput.dataset.auto==="true"){prefixInput.value=name?suggestedPrefix(name):"";prefixInput.dataset.auto="true"}
+      if(!repoInput.value.trim()||repoInput.dataset.auto==="true"){repoInput.value=name?`${slugify(name)}-report-card`:"";repoInput.dataset.auto="true"}
+      if(!tenantInput.value.trim()||tenantInput.dataset.auto==="true"){tenantInput.value=name?`${suggestedPrefix(name)}-001`:"";tenantInput.dataset.auto="true"}
+    };
+    nameInput.addEventListener("input",syncSuggestions);
+    [shortInput,prefixInput,repoInput,tenantInput].forEach(input=>input.addEventListener("input",()=>{input.dataset.auto="false"}));
+    logoInput.addEventListener("change",()=>{const file=logoInput.files?.[0];if(!file)return;if(state.packageLogoPreviewUrl)URL.revokeObjectURL(state.packageLogoPreviewUrl);state.packageLogoPreviewUrl=URL.createObjectURL(file);byId("schoolPackageLogoPreview").src=state.packageLogoPreviewUrl});
+    byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
+    $$('[data-package-download]').forEach(button=>button.onclick=()=>downloadProtectedPackage(button.dataset.packageDownload,button));
+    $$('[data-package-revoke]').forEach(button=>button.onclick=()=>revokeProtectedPackage(button.dataset.packageRevoke,button));
   }
 
   function suggestedPrefix(name) {
@@ -4549,119 +4587,45 @@
     const initials=(words.length?words:String(name||"").trim().split(/\s+/)).map(word=>word[0]||"").join("").replace(/[^a-z0-9]/gi,"").toUpperCase();
     return (initials||"SCH").slice(0,8);
   }
-  function validEmailDomain(value) {return /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(String(value||"").trim())}
-  function generatedPlaceholderEmailDomain(schoolName) {
-    const label=slugify(schoolName,"school").slice(0,55).replace(/-+$/g,"")||"school";
-    return `${label}.invalid`;
+
+  async function uploadPlatformPackageTemplate() {
+    const file=byId("platformPackageTemplate")?.files?.[0],button=byId("platformTemplateUpload");
+    if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
+    if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
+    button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v6.9.1 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
+    finally{button.disabled=false;button.textContent="Install or replace template"}
   }
-  function sqlLiteral(value) {return `'${String(value??"").replace(/'/g,"''")}'`}
-  function safeShortName(name,value) {return String(value||`${suggestedPrefix(name)} Reports`).trim().slice(0,30)||"School Reports"}
-  function generatedAppJs(baseApp,identity) {
-    return baseApp
-      .replace(/window\.NIS_CONFIG\?\.appName \|\| "[^"]*"/,`window.NIS_CONFIG?.appName || ${JSON.stringify(`${identity.schoolName} Report Card System`)}`)
-      .replace(/window\.NIS_CONFIG\?\.schoolName \|\| "[^"]*"/,`window.NIS_CONFIG?.schoolName || ${JSON.stringify(identity.schoolName)}`)
-      .replace(/window\.NIS_CONFIG\?\.schoolShortName \|\| "[^"]*"/,`window.NIS_CONFIG?.schoolShortName || ${JSON.stringify(identity.shortName)}`)
-      .replace(/window\.NIS_CONFIG\?\.userEmailDomain \|\| "[^"]*"/,`window.NIS_CONFIG?.userEmailDomain || ${JSON.stringify(identity.emailDomain)}`)
-      .replace(/window\.NIS_CONFIG\?\.reportNumberPrefix \|\| "[^"]*"/,`window.NIS_CONFIG?.reportNumberPrefix || ${JSON.stringify(identity.reportPrefix)}`)
-      .replace(/window\.NIS_CONFIG\?\.logoPath \|\| "[^"]*"/,'window.NIS_CONFIG?.logoPath || "assets/school-logo.png"');
-  }
-  function generatorConfigText(identity) {
-    return `// Generated by Report Card Enterprise v6.9.0 Reusable Schools Edition.\n// Add only the browser-safe Supabase Project URL and Publishable key.\nwindow.NIS_CONFIG = Object.freeze({\n  supabaseUrl: ${JSON.stringify(identity.supabaseUrl||"YOUR_SUPABASE_URL")},\n  supabaseAnonKey: ${JSON.stringify(identity.supabaseKey||"YOUR_SUPABASE_PUBLISHABLE_KEY")},\n  appName: ${JSON.stringify(`${identity.schoolName} Report Card System`)},\n  schoolName: ${JSON.stringify(identity.schoolName)},\n  schoolShortName: ${JSON.stringify(identity.shortName)},\n  userEmailDomain: ${JSON.stringify(identity.emailDomain)},\n  reportNumberPrefix: ${JSON.stringify(identity.reportPrefix)},\n  generatedSchoolPackage: true,\n  logoPath: "assets/school-logo.png",\n  defaultReportTemplatePath: "assets/approved-terminal-report-template.png"\n});\n`;
-  }
-  function generatorIdentitySql(identity) {
-    return `-- ${identity.schoolName} identity bootstrap\n-- Run after 06_schema.sql in the new school's Supabase SQL Editor.\n\nbegin;\n\nupdate public.school_settings\nset school_name=${sqlLiteral(identity.schoolName)},\n    logo_url='assets/school-logo.png',\n    report_number_prefix=${sqlLiteral(identity.reportPrefix)},\n    user_email_domain=${sqlLiteral(identity.emailDomain)},\n    updated_at=now()\nwhere id=(select id from public.school_settings order by created_at,id limit 1);\n\ncommit;\n\nselect school_name,logo_url,report_number_prefix,user_email_domain\nfrom public.school_settings\norder by created_at,id\nlimit 1;\n`;
-  }
-  function generatorReadme(identity) {
-    const configured=Boolean(identity.supabaseUrl&&identity.supabaseKey);
-    return `# ${identity.schoolName} Report Card Enterprise\n\nGenerated with Report Card Enterprise v6.9.0 Reusable Schools Edition.\n\n## Fresh setup order\n\n1. Create a separate Supabase project for ${identity.schoolName}.\n2. Run the nine SQL files in order, from 01_schema_foundation.sql through 07_schema.sql.\n3. Deploy the three Edge Functions in supabase/functions.\n4. Configure Edge Function secrets and Vault as described in COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md.\n5. Run SCHOOL_IDENTITY_SETUP.sql.\n6. ${configured?"The generated config.js already contains the supplied Project URL and Publishable key. Verify both values before deployment.":"Edit GITHUB_PAGES_FRONTEND/config.js and enter the new Supabase Project URL and Publishable key."}\n7. Create a GitHub repository named ${identity.repositoryName}.\n8. Upload the contents inside GITHUB_PAGES_FRONTEND to the repository root.\n9. Enable GitHub Pages from main / root.\n10. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.\n11. Create the intended System Administrator as the first Auth user.\n12. Create a separate platform-owner Auth user, edit PLATFORM_SUPER_ADMIN_SETUP.sql with that email, run it, and complete mandatory MFA.\n\n## Branding\n\nSchool name: ${identity.schoolName}\nShort name: ${identity.shortName}\nReport prefix: ${identity.reportPrefix}\nUser email domain: ${identity.emailDomain}${identity.emailDomainProvided?"":" (generated non-deliverable placeholder; change in Settings before enabling email delivery)"}\nLogo file: GITHUB_PAGES_FRONTEND/assets/school-logo.png\n\nDo not publish Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets to GitHub.\n`;
-  }
-  function generatedIndexHtml(baseHtml,identity) {
-    const safeName=esc(identity.schoolName);
-    return baseHtml
-      .replace(/assets\/(?:nipe-school-logo|school-logo)\.png/g,"assets/school-logo.png")
-      .replace(/(<[^>]+data-school-name[^>]*>)[\s\S]*?(<\/[^>]+>)/g,`$1${safeName}$2`)
-      .replace(/(<strong id="brandName"[^>]*>)[\s\S]*?(<\/strong>)/i,`$1${safeName}$2`)
-      .replace(/(<img[^>]+data-school-logo[^>]+alt=")[^"]*(")/g,`$1${safeName}$2`)
-      .replace(/<title>[\s\S]*?<\/title>/i,`<title>${safeName} | Report Cards</title>`);
-  }
-  function generatedServiceWorker(identity) {
-    const cache=`report-card-${slugify(identity.schoolName)}-v6-8-2-r1`;
-    return `const CACHE_NAME=${JSON.stringify(cache)};\nconst STATIC_ASSETS=[\n  "./","index.html","style.css","app.js","config.js","manifest.webmanifest",\n  "assets/school-logo.png","assets/approved-terminal-report-template.png",\n  "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",\n  "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",\n  "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",\n  "assets/vendor/html2canvas-1.4.1.min.js"\n];\nself.addEventListener("install",event=>event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(STATIC_ASSETS)).then(()=>self.skipWaiting())));\nself.addEventListener("activate",event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim())));\nself.addEventListener("fetch",event=>{const request=event.request;if(request.method!=="GET")return;const url=new URL(request.url);if(url.hostname.endsWith(".supabase.co")){event.respondWith(fetch(request).catch(()=>new Response(JSON.stringify({message:"offline"}),{status:503,headers:{"Content-Type":"application/json"}})));return;}if(url.pathname.endsWith("/config.js")){event.respondWith(fetch(request,{cache:"no-store"}).then(response=>{if(response.ok){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;}).catch(()=>caches.match(request)));return;}if(request.mode==="navigate"){event.respondWith(fetch(request).then(response=>{const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put("index.html",clone));return response;}).catch(()=>caches.match("index.html")));return;}event.respondWith(caches.match(request).then(cached=>cached||fetch(request).then(response=>{if(response.ok&&url.origin===self.location.origin){const clone=response.clone();caches.open(CACHE_NAME).then(cache=>cache.put(request,clone));}return response;})));});\nself.addEventListener("sync",event=>{if(event.tag==="nis-outbox")event.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:"FLUSH_OUTBOX"}))));});\nself.addEventListener("message",event=>{if(event.data?.type==="SKIP_WAITING")self.skipWaiting();});\n`;
-  }
-  function generatedManifest(identity) {
-    return JSON.stringify({name:`${identity.schoolName} Report Card Enterprise`,short_name:identity.shortName,description:`Academic reporting and student records for ${identity.schoolName}`,start_url:"./",display:"standalone",background_color:"#f4f7fb",theme_color:"#0a2f73",icons:[{src:"assets/school-logo.png",sizes:"512x512",type:"image/png",purpose:"any maskable"}]},null,2)+"\n";
-  }
-  async function fetchPackageFile(path,binary=false) {
-    const response=await fetch(path,{cache:"no-store"});
-    if(!response.ok)throw new Error(`Required package file is unavailable: ${path}`);
-    return binary?response.arrayBuffer():response.text();
-  }
-  async function packageLogoPng(file) {
-    if(!file)throw new Error("Upload the new school's logo.");
-    if(!PACKAGE_LOGO_TYPES.has(file.type))throw new Error("School logo must be PNG, JPEG, or WebP.");
-    if(file.size>PACKAGE_LOGO_MAX_BYTES)throw new Error("School logo must not exceed 5 MB.");
-    const objectUrl=URL.createObjectURL(file);
-    try{
-      const image=await loadImage(objectUrl),maximum=1024,scale=Math.min(1,maximum/Math.max(image.naturalWidth||image.width,image.naturalHeight||image.height));
-      const width=Math.max(1,Math.round((image.naturalWidth||image.width)*scale)),height=Math.max(1,Math.round((image.naturalHeight||image.height)*scale));
-      if(width<64||height<64)throw new Error("School logo must be at least 64 by 64 pixels.");
-      const canvas=document.createElement("canvas");canvas.width=width;canvas.height=height;
-      const context=canvas.getContext("2d");context.clearRect(0,0,width,height);context.drawImage(image,0,0,width,height);
-      return await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error("School logo could not be converted to PNG.")),"image/png",0.95));
-    } finally {URL.revokeObjectURL(objectUrl)}
-  }
-  function bindGithubNavigator() {
-    const form=byId("schoolPackageForm"),nameInput=form.elements.school_name,shortInput=form.elements.short_name,prefixInput=form.elements.report_prefix,repoInput=form.elements.repository_name,logoInput=byId("schoolPackageLogo");
-    let previousName="";
-    const syncSuggestions=()=>{
-      const name=nameInput.value.trim();byId("schoolPackageNamePreview").textContent=name||"New school package";
-      if(!shortInput.value.trim()||shortInput.dataset.auto==="true"){shortInput.value=name?`${suggestedPrefix(name)} Reports`:"";shortInput.dataset.auto="true"}
-      if(!prefixInput.value.trim()||prefixInput.dataset.auto==="true"){prefixInput.value=name?suggestedPrefix(name):"";prefixInput.dataset.auto="true"}
-      if(!repoInput.value.trim()||repoInput.dataset.auto==="true"){repoInput.value=name?`${slugify(name)}-report-card`:"";repoInput.dataset.auto="true"}
-      previousName=name;
-    };
-    nameInput.addEventListener("input",syncSuggestions);
-    [shortInput,prefixInput,repoInput].forEach(input=>input.addEventListener("input",()=>{input.dataset.auto="false"}));
-    logoInput.addEventListener("change",()=>{
-      const file=logoInput.files?.[0];if(!file)return;
-      if(state.packageLogoPreviewUrl)URL.revokeObjectURL(state.packageLogoPreviewUrl);
-      state.packageLogoPreviewUrl=URL.createObjectURL(file);byId("schoolPackageLogoPreview").src=state.packageLogoPreviewUrl;
-    });
-    byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
-  }
+
   async function generateReusableSchoolPackage() {
     if(state.packageGeneratorBusy)return;
-    if(!window.JSZip){toast("Package generator unavailable","The packaged ZIP library did not load.","error");return}
     const form=byId("schoolPackageForm");if(!form?.reportValidity())return;
-    const values=formObject(form),schoolName=String(values.school_name||"").trim(),shortName=safeShortName(schoolName,values.short_name),reportPrefix=String(values.report_prefix||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12),emailDomainInput=String(values.email_domain||"").trim().toLowerCase(),emailDomainProvided=Boolean(emailDomainInput),emailDomain=emailDomainInput||generatedPlaceholderEmailDomain(schoolName),repositoryName=slugify(values.repository_name||`${schoolName}-report-card`),supabaseUrl=String(values.supabase_url||"").trim(),supabaseKey=String(values.supabase_key||"").trim();
-    if(schoolName.length<3){toast("Package not generated","School name must contain at least three characters.","error");return}
-    if(reportPrefix.length<2){toast("Package not generated","Report number prefix must contain at least two letters or numbers.","error");return}
-    if(emailDomainProvided&&!validEmailDomain(emailDomain)){toast("Package not generated","Enter only a valid domain, for example school.edu.gh, or leave this optional field blank.","error");return}
-    if(supabaseUrl&&!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(supabaseUrl)){toast("Package not generated","Supabase Project URL is invalid.","error");return}
-    if(/service_role|sb_secret_/i.test(supabaseKey)){toast("Secret key rejected","Use only a browser-safe Supabase Publishable key. Never package a Secret or service-role key.","error",8000);return}
-    if(supabaseKey&&!/^sb_publishable_[A-Za-z0-9._-]+$/.test(supabaseKey)&&!/^eyJ[A-Za-z0-9._-]+$/.test(supabaseKey)){toast("Package not generated","Supabase key is not a valid Publishable or legacy anon key.","error");return}
-    const identity={schoolName,shortName,reportPrefix,emailDomain,emailDomainProvided,repositoryName,supabaseUrl:supabaseUrl.replace(/\/$/,""),supabaseKey};
-    const button=byId("generateSchoolPackage"),progress=byId("packageGeneratorProgress"),progressText=byId("packageGeneratorProgressText");
+    const values=formObject(form),logoFile=byId("schoolPackageLogo")?.files?.[0],button=byId("generateSchoolPackage"),progress=byId("packageGeneratorProgress"),progressText=byId("packageGeneratorProgressText");
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
-      progressText.textContent="Converting school logo";const logoBlob=await packageLogoPng(byId("schoolPackageLogo").files?.[0]);
-      const zip=new window.JSZip(),root=`${slugify(schoolName)}-report-card-enterprise-v6.9.0`,frontend=`${root}/GITHUB_PAGES_FRONTEND`;
-      progressText.textContent="Loading application files";
-      const textFiles={};
-      for(const path of REUSABLE_FRONTEND_TEXT_FILES)textFiles[path]=await fetchPackageFile(path,false);
-      zip.file(`${frontend}/index.html`,generatedIndexHtml(textFiles["index.html"],identity));
-      zip.file(`${frontend}/style.css`,textFiles["style.css"]);zip.file(`${frontend}/app.js`,generatedAppJs(textFiles["app.js"],identity));
-      zip.file(`${frontend}/config.js`,generatorConfigText(identity));zip.file(`${frontend}/service-worker.js`,generatedServiceWorker(identity));zip.file(`${frontend}/manifest.webmanifest`,generatedManifest(identity));zip.file(`${frontend}/.nojekyll`,"");
-      zip.file(`${frontend}/.gitignore`,".DS_Store\nThumbs.db\n*.log\n");zip.file(`${frontend}/DEPLOY_README.txt`,generatorReadme(identity));zip.file(`${frontend}/assets/school-logo.png`,logoBlob);
-      let completed=0,total=REUSABLE_FRONTEND_BINARY_FILES.length+REUSABLE_PACKAGE_SOURCE_FILES.length;
-      for(const path of REUSABLE_FRONTEND_BINARY_FILES){completed+=1;progressText.textContent=`Copying frontend assets ${completed}/${total}`;zip.file(`${frontend}/${path}`,await fetchPackageFile(path,true));}
-      for(const path of REUSABLE_PACKAGE_SOURCE_FILES){completed+=1;progressText.textContent=`Copying Supabase and recovery files ${completed}/${total}`;const data=await fetchPackageFile(`package-source/${path}`,true);zip.file(`${root}/${path}`,data);zip.file(`${frontend}/package-source/${path}`,data);}
-      zip.file(`${root}/SCHOOL_IDENTITY_SETUP.sql`,generatorIdentitySql(identity));zip.file(`${root}/GENERATED_PACKAGE_README.md`,generatorReadme(identity));
-      zip.file(`${root}/GENERATED_PACKAGE_METADATA.json`,JSON.stringify({generator_version:"6.9.0",generated_at:new Date().toISOString(),school_name:schoolName,school_short_name:shortName,report_number_prefix:reportPrefix,user_email_domain:emailDomain,user_email_domain_provided:emailDomainProvided,email_delivery_ready:emailDomainProvided,repository_name:repositoryName,supabase_config_included:Boolean(supabaseUrl&&supabaseKey)},null,2)+"\n");
-      progressText.textContent="Compressing complete package";const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});const filename=`${slugify(schoolName)}_Report_Card_Enterprise_v6_7_4_Fresh_Complete_Package.zip`;downloadBlob(filename,blob);
-      toast("Reusable school package generated",emailDomainProvided?`${filename} is ready for the new school's separate Supabase and GitHub deployment.`:`${filename} is ready. A safe .invalid email-domain placeholder was added and can be changed later in Settings.`,"success",9000);setSync("online","Synced");
-    } catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"reusable_school_package_generator"})}
+      progressText.textContent="Reading and validating school logo";const logo_base64=await readFileAsDataUrl(logoFile,PACKAGE_LOGO_MAX_BYTES,PACKAGE_LOGO_TYPES);
+      progressText.textContent="Generating and signing package on the server";
+      const data=await invokePlatformPackageManager("generate",{...values,logo_base64,logo_mime:logoFile.type,expires_at:values.expires_at?new Date(values.expires_at).toISOString():""});
+      if(!data.signed_url)throw new Error("The package was created but no download authorization was returned.");
+      const link=document.createElement("a");link.href=data.signed_url;link.rel="noopener";link.click();
+      toast("Protected package generated",`${data.artifact.filename} is ready. The signed download URL expires in ${number(data.expires_in)} seconds.`,"success",9000);state.platformPackageConsole=null;setSync("online","Synced");await renderGithubNavigator(state.viewToken,true);
+    }catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"platform_package_manager"})}
     finally{state.packageGeneratorBusy=false;button.disabled=false;progress.classList.add("hidden")}
+  }
+
+  async function downloadProtectedPackage(artifactId,button) {
+    button.disabled=true;
+    try{const data=await invokePlatformPackageManager("download",{artifact_id:artifactId});const link=document.createElement("a");link.href=data.signed_url;link.rel="noopener";link.click();toast("Download authorized",`${data.filename} is available through a short-lived signed URL.`);state.platformPackageConsole=null;await renderGithubNavigator(state.viewToken,true)}
+    catch(error){toast("Package not downloaded",friendlyError(error),"error",8000)}finally{button.disabled=false}
+  }
+
+  async function revokeProtectedPackage(artifactId,button) {
+    const reason=window.prompt("Enter the compliance or security reason for revoking this package:","")||"";if(reason.trim().length<5)return;
+    if(!await confirmAction("Revoke generated package","New download URLs will be blocked. Existing short-lived URLs may remain valid until their ten-minute expiry.","Revoke package",true))return;
+    button.disabled=true;
+    try{await invokePlatformPackageManager("revoke",{artifact_id:artifactId,reason:reason.trim()});state.platformPackageConsole=null;toast("Package revoked");await renderGithubNavigator(state.viewToken,true)}
+    catch(error){toast("Package not revoked",friendlyError(error),"error",8000)}finally{button.disabled=false}
   }
 
   async function showVerification(token) {

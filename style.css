@@ -795,6 +795,7 @@ td{font-size:13px}
 @media (max-width:720px){.attendance-status-select{min-width:110px}.attendance-controls{grid-template-columns:1fr}}
 
 /* Report Card Enterprise v6.9.0: platform licensing control */
+/* Report Card Enterprise v6.9.1: platform-only package control */
 .license-banner{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 18px;margin:0 0 18px;border:1px solid #f0cf75;border-radius:14px;background:#fff8df;color:#654700}
 .license-banner>div{display:grid;gap:4px}.license-banner strong{font-size:14px}.license-banner span,.license-banner small{font-size:12px;line-height:1.45}
 .license-banner.restricted{border-color:#efb1b7;background:#fff0f1;color:#861f2a}.license-banner.warning{border-color:#f0cf75;background:#fff8df;color:#654700}
