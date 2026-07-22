@@ -1,19 +1,15 @@
-REPORT CARD ENTERPRISE v6.8.1 REUSABLE SCHOOLS EDITION
-GITHUB PAGES FRONTEND
+REPORT CARD ENTERPRISE v6.8.2 REUSABLE SCHOOLS EDITION
 
-1. For an existing v6.8.0 system, run 07_schema.sql before deploying this frontend.
-2. Preserve the production Supabase Project URL and Publishable key in config.js.
-3. Upload the CONTENTS of this folder to the GitHub repository root.
-4. Enable GitHub Pages from main / root.
-5. Add the final GitHub Pages URL to Supabase Authentication Site URL and Redirect URLs.
-6. Close old application tabs and perform a hard refresh after deployment.
-7. Confirm Students and staff lists remain alphabetical.
-8. Sign in as a subject teacher and confirm scores can be entered but reports cannot be submitted or published.
-9. Sign in as a class teacher and verify individual and bulk submission only for the assigned home class.
-10. Sign in as the Principal and verify individual and bulk class approval.
-11. Sign in as a class teacher and System Administrator and verify approved reports can be published individually and in bulk.
-12. Confirm bulk publication stores official PDFs and attendance totals still update reports automatically.
+DEPLOYMENT
+
+1. Preserve the confirmed working v6.8.1 package and create a verified backup.
+2. In Supabase SQL Editor, run the v6.8.2 continuation appended to 07_schema.sql. Rerunning the complete updated 07_schema.sql is also safe.
+3. Confirm the final SQL result reads: 07 SCHEMA v6.8.2 PDF/TEMPLATE STORAGE FIX: PASS.
+4. Replace the GitHub Pages frontend files while preserving the installation-specific config.js values.
+5. Hard refresh the browser or allow the v6.8.2 service worker to activate.
+6. As an assigned class teacher, create an official PDF for a published report and download it.
+7. As the System Administrator, upload or replace one report-card template and preview it.
+8. Confirm a subject teacher still cannot publish reports or create official PDFs.
+9. Complete every acceptance test in UPGRADE_FROM_V6_8_1_TO_V6_8_2.txt before declaring production acceptance.
 
 The System Administrator GitHub Navigator can generate a complete separately branded package for another school. The package-source folder is required by that generator and must remain in the deployment.
-
-Never place Supabase Secret keys, service-role keys, database passwords, cron secrets, backup encryption keys, or email-service secrets in config.js or GitHub.

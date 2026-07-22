@@ -1,4 +1,4 @@
-# Report Card Enterprise v6.8.1 Reusable Schools Edition
+# Report Card Enterprise v6.8.2 Reusable Schools Edition
 
 ## Complete Fresh Setup: Supabase Dashboard to GitHub Pages
 

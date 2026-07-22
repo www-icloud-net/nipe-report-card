@@ -1,22 +1,12 @@
-REPORT CARD ENTERPRISE v6.8.1 REUSABLE SCHOOLS EDITION
-FRESH PACKAGE VALIDATION
+REPORT CARD ENTERPRISE v6.8.2 REUSABLE SCHOOLS EDITION
+FRESH PACKAGE VALIDATION SUMMARY
 
-STATUS
-- Built from the confirmed stable v6.8.0 production baseline in a separate versioned copy.
-- Nine SQL files are present in the required order through 07_schema.sql.
-- 69 workflow, authorization, structural, parity, metadata, and generator assertions passed.
-- JavaScript and service-worker syntax checks passed.
-- Three Edge Function TypeScript syntax-transpilation checks passed.
-- JSON parsing and frontend mirror checks passed.
-- All 35 reusable-generator package-source resources are present.
-
-WORKFLOW COVERAGE
-- Assigned class teacher only: individual and bulk submission.
-- Principal only: individual and bulk approval.
-- Assigned class teacher or System Administrator only: individual and bulk publication.
-- Subject teacher: assigned score entry only, with no submission or publication authority.
-- Bulk actions require one class and one term and retain per-report completeness validation.
-- Bulk publication attempts official PDF storage for every newly published report.
-
-LIVE ACCEPTANCE REQUIRED
-This package was not connected to the school's production Supabase project during build validation. Run 07_schema.sql and complete UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt before production acceptance.
+- Built from the confirmed stable v6.8.1 production baseline in a separate versioned copy.
+- SQL sequence remains 01 through 07; the v6.8.2 continuation is appended to 07_schema.sql.
+- Authenticated execution of can_publish_report is restored for Supabase Storage RLS evaluation.
+- Report PDF and report-card template policies use bucket-gated CASE expressions.
+- Class-teacher and System Administrator PDF authority is preserved.
+- Subject-teacher publication and PDF creation remain blocked.
+- System Administrator template management remains role restricted.
+- Root and GitHub Pages frontend files are maintained as deployment mirrors.
+- Live production acceptance remains required after deployment.

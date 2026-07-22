@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v6.8.1 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.8.2 REUSABLE SCHOOLS EDITION
 PERMANENT SQL SEQUENCE POLICY
 
 The confirmed permanent database sequence is:
@@ -15,10 +15,15 @@ The confirmed permanent database sequence is:
 
 POLICY
 1. Files 01 through 06 are frozen historical foundations and must not be renamed or reordered.
-2. v6.8.1 database changes are contained in 07_schema.sql.
+2. v6.8.2 database changes are contained in 07_schema.sql.
 3. Fresh installations run every permanent file in the exact order shown above.
 4. Existing v6.8.0 installations run only 07_schema.sql, then deploy the updated frontend and scheduled-backup Edge Function.
 5. Future SQL upgrades continue in 07_schema.sql while it remains safely executable in the Supabase SQL Editor.
 6. When 07_schema.sql approaches the practical execution or line limit, begin 08_schema.sql.
 7. Continue sequentially with 09_schema.sql and later files when required.
 8. Do not create temporary numbered schema files between permanent sequence numbers.
+
+CURRENT STATUS AFTER v6.8.2
+- Continue all current fixes and upgrades in 07_schema.sql.
+- Begin 08_schema.sql only when 07_schema.sql reaches the practical Supabase SQL Editor or maintainability limit.
+- Never restart changes in earlier frozen schema files.

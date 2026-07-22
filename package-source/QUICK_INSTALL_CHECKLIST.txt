@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v6.8.1 QUICK INSTALL CHECKLIST
+REPORT CARD ENTERPRISE v6.8.2 QUICK INSTALL CHECKLIST
 
 FRESH INSTALL
 [ ] Create a new Supabase project.
@@ -32,6 +32,6 @@ UPGRADE FROM v6.8.0
 [ ] Preserve the v6.8.0 rollback ZIP.
 [ ] Create a verified encrypted backup.
 [ ] Run 07_schema.sql only.
-[ ] Redeploy scheduled-backup for v6.8.1 metadata.
-[ ] Deploy the v6.8.1 frontend while preserving config.js.
+[ ] Redeploy scheduled-backup for v6.8.2 metadata.
+[ ] Deploy the v6.8.2 frontend while preserving config.js.
 [ ] Complete all acceptance tests in UPGRADE_FROM_V6_8_0_TO_V6_8_1.txt.

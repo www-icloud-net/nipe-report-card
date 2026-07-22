@@ -294,3 +294,134 @@ end $$;
 commit;
 
 select '07 SCHEMA: PASS' as status;
+
+-- =============================================================================
+-- REPORT CARD ENTERPRISE v6.8.2
+-- REPORT PDF AND TEMPLATE STORAGE AUTHORIZATION HOTFIX
+-- Continue in 07_schema.sql. Run after the v6.8.1 section above.
+-- =============================================================================
+
+begin;
+
+-- v6.8.1 correctly restricted publication decisions inside this function, but
+-- also removed EXECUTE from authenticated users. Supabase Storage RLS policies
+-- invoke the function while evaluating report-pdf object writes, so the missing
+-- privilege caused "permission denied for function can_publish_report". Because
+-- PostgreSQL does not guarantee boolean-expression evaluation order, the same
+-- report-pdf policy could also be considered during template uploads.
+revoke all on function public.can_publish_report(uuid) from public,anon;
+grant execute on function public.can_publish_report(uuid) to authenticated;
+grant execute on function public.can_publish_report(uuid) to service_role;
+
+-- Recreate report PDF policies with bucket-gated CASE expressions. CASE ensures
+-- report-specific authorization functions are evaluated only for report-pdfs.
+drop policy if exists report_pdfs_read on storage.objects;
+create policy report_pdfs_read on storage.objects for select to authenticated
+using(
+  case when bucket_id='report-pdfs'
+    then public.can_view_report(public.safe_uuid((storage.foldername(name))[1]))
+    else false
+  end
+);
+
+drop policy if exists report_pdfs_write on storage.objects;
+create policy report_pdfs_write on storage.objects for insert to authenticated
+with check(
+  case when bucket_id='report-pdfs'
+    then public.can_publish_report(public.safe_uuid((storage.foldername(name))[1]))
+    else false
+  end
+);
+
+drop policy if exists report_pdfs_update on storage.objects;
+create policy report_pdfs_update on storage.objects for update to authenticated
+using(
+  case when bucket_id='report-pdfs'
+    then public.can_publish_report(public.safe_uuid((storage.foldername(name))[1]))
+    else false
+  end
+)
+with check(
+  case when bucket_id='report-pdfs'
+    then public.can_publish_report(public.safe_uuid((storage.foldername(name))[1]))
+    else false
+  end
+);
+
+drop policy if exists report_pdfs_delete on storage.objects;
+create policy report_pdfs_delete on storage.objects for delete to authenticated
+using(
+  case when bucket_id='report-pdfs'
+    then public.can_delete_report(public.safe_uuid((storage.foldername(name))[1]))
+    else false
+  end
+);
+
+-- Apply the same deterministic bucket gating to administrator template writes.
+-- This isolates template uploads from every unrelated Storage policy.
+drop policy if exists report_card_templates_storage_read on storage.objects;
+create policy report_card_templates_storage_read on storage.objects for select to authenticated
+using(bucket_id='report-card-templates');
+
+drop policy if exists report_card_templates_storage_insert on storage.objects;
+create policy report_card_templates_storage_insert on storage.objects for insert to authenticated
+with check(
+  case when bucket_id='report-card-templates' then
+    public.is_system_admin()
+    and (storage.foldername(name))[1] in ('early_years','basic_1_6','basic_7_9')
+  else false end
+);
+
+drop policy if exists report_card_templates_storage_update on storage.objects;
+create policy report_card_templates_storage_update on storage.objects for update to authenticated
+using(
+  case when bucket_id='report-card-templates'
+    then public.is_system_admin()
+    else false
+  end
+)
+with check(
+  case when bucket_id='report-card-templates' then
+    public.is_system_admin()
+    and (storage.foldername(name))[1] in ('early_years','basic_1_6','basic_7_9')
+  else false end
+);
+
+drop policy if exists report_card_templates_storage_delete on storage.objects;
+create policy report_card_templates_storage_delete on storage.objects for delete to authenticated
+using(
+  case when bucket_id='report-card-templates'
+    then public.is_system_admin()
+    else false
+  end
+);
+
+-- Deployment verification. This deliberately checks the privilege that caused
+-- the production failure and the Storage policies required by both workflows.
+do $$
+begin
+  if not has_function_privilege('authenticated','public.can_publish_report(uuid)','EXECUTE') then
+    raise exception 'v6.8.2 verification failed: authenticated cannot execute can_publish_report';
+  end if;
+
+  if not exists(
+    select 1 from pg_policies
+    where schemaname='storage' and tablename='objects'
+      and policyname='report_pdfs_write' and cmd='INSERT'
+  ) then
+    raise exception 'v6.8.2 verification failed: report PDF insert policy is missing';
+  end if;
+
+  if not exists(
+    select 1 from pg_policies
+    where schemaname='storage' and tablename='objects'
+      and policyname='report_card_templates_storage_insert' and cmd='INSERT'
+  ) then
+    raise exception 'v6.8.2 verification failed: template insert policy is missing';
+  end if;
+end $$;
+
+commit;
+
+select '07 SCHEMA v6.8.2 PDF/TEMPLATE STORAGE FIX: PASS' as status;
+
