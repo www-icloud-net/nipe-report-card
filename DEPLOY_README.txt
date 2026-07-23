@@ -1,18 +1,15 @@
-REPORT CARD ENTERPRISE v6.9.2 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v7.0.1 REUSABLE SCHOOLS EDITION
 GITHUB PAGES DEPLOYMENT
 
-EXISTING v6.9.1 INSTALLATION
-1. Preserve the confirmed v6.9.1 package and create a verified encrypted backup.
-2. Run only the appended v6.9.2 continuation in 07_schema.sql.
-3. Confirm: 07 SCHEMA v6.9.2 EMERGENCY ACADEMIC DELEGATION: PASS.
+Deploy the contents of this GITHUB_PAGES_FRONTEND directory only.
+
+Upgrade from the confirmed v6.9.2 baseline:
+1. Preserve v6.9.2 and create a verified encrypted backup.
+2. Run 08_schema.sql after the complete 07_schema.sql.
+3. Confirm: 08 SCHEMA v7.0.1 PRODUCTION MATURITY SUITE: PASS.
 4. Redeploy scheduled-backup and platform-package-manager.
-5. Preserve the live Supabase URL and publishable key in config.js.
-6. Upload only the contents of this GITHUB_PAGES_FRONTEND directory.
-7. Hard-refresh or clear the previous application cache.
-8. Complete UPGRADE_FROM_V6_9_1_TO_V6_9_2.txt acceptance tests.
+5. Preserve the existing production config.js values.
+6. Upload the protected PLATFORM_PACKAGE_TEMPLATE_v7_0_1.zip through GitHub Navigator.
+7. Hard-refresh the browser and complete the acceptance tests in UPGRADE_FROM_V6_9_2_TO_V7_0_1.txt.
 
-FRESH INSTALLATION
-Follow COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md and run all nine schema files in order, ending with 07_schema.sql.
-
-SECURITY
-Never publish service-role keys, Edge Function secrets, backup keys, RCE_PACKAGE_SIGNING_SECRET, PLATFORM_PACKAGE_TEMPLATE files, generated licensed packages, or any package-source directory.
+Never upload Supabase service-role keys, signing secrets, backup encryption keys, GitHub tokens, or database passwords to this public directory.

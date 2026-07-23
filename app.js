@@ -42,19 +42,23 @@
 
   const NAV = [
     {id:"dashboard",label:"Dashboard",icon:"▦",subtitle:"Academic performance overview"},
+    {id:"operations",label:"Operations",icon:"◫",subtitle:"Deadlines, health, corrections, and recovery readiness",roles:["system_admin","principal"]},
     {id:"licensing",label:"Platform Licensing",icon:"◇",subtitle:"Licence plans, lifecycle, compliance, and access controls",roles:["platform_super_admin"]},
     {id:"my_class",label:"My Class",icon:"▣",subtitle:"Assigned class, learners, and report progress",roles:["class_teacher"]},
     {id:"attendance",label:"Attendance",icon:"✓",subtitle:"Daily class attendance and automatic term totals",roles:["class_teacher"]},
     {id:"my_subjects",label:"My Subjects",icon:"⌘",subtitle:"Assigned subjects, classes, and assessment progress",roles:["class_teacher","subject_teacher"]},
     {id:"students",label:"Students",icon:"◉",subtitle:"Student records and enrolment",roles:["system_admin","class_teacher","subject_teacher"]},
+    {id:"history",label:"Academic History",icon:"▧",subtitle:"Cumulative transcripts, lifecycle, transfers, and verification",roles:["system_admin","principal","class_teacher","subject_teacher"]},
     {id:"teachers",label:"Teachers",icon:"♜",subtitle:"Teacher records and assignments",permission:"manage_teachers"},
     {id:"headteachers",label:"Principals",icon:"★",subtitle:"Principal records and appointments",permission:"manage_headteachers"},
     {id:"academics",label:"Academics",icon:"⌘",subtitle:"Academic structure and assessment",permission:"manage_academics"},
     {id:"delegations",label:"Emergency Delegation",icon:"⚑",subtitle:"Temporary academic access, continuity, and Principal oversight",roles:["system_admin","principal"]},
     {id:"reports",label:"Report Cards",icon:"▤",subtitle:"Assessment, approval, and publication",hideFor:["parent_guardian"]},
+    {id:"insights",label:"Insights",icon:"◩",subtitle:"Performance, attendance, completion, and class trends",roles:["system_admin","principal","class_teacher","subject_teacher"]},
     {id:"children",label:"My Children",icon:"♥",subtitle:"Published academic records",roles:["parent_guardian"]},
     {id:"users",label:"Users and Access",icon:"♟",subtitle:"Roles, classes, and security",permission:"manage_users"},
     {id:"notifications",label:"Notifications",icon:"◆",subtitle:"School and workflow alerts"},
+    {id:"compliance",label:"Privacy and Security",icon:"◈",subtitle:"Retention, privacy requests, security events, and verification",roles:["system_admin","principal"]},
     {id:"audit",label:"Audit Trail",icon:"◎",subtitle:"Record changes and accountability",permission:"view_audit"},
     {id:"settings",label:"Settings",icon:"⚙",subtitle:"School identity, security, and resilience",roles:["system_admin"]},
     {id:"github",label:"GitHub Navigator",icon:"⌁",subtitle:"Protected package generation and deployment controls",roles:["platform_super_admin"]}
@@ -62,10 +66,10 @@
 
   const ROLE_NAV_IDS = Object.freeze({
     platform_super_admin:["licensing","github"],
-    system_admin:["dashboard","students","teachers","headteachers","academics","delegations","reports","users","notifications","audit","settings"],
-    principal:["dashboard","delegations","reports","notifications"],
-    class_teacher:["dashboard","my_class","attendance","my_subjects","students","reports","notifications"],
-    subject_teacher:["dashboard","my_subjects","students","reports","notifications"],
+    system_admin:["dashboard","operations","students","history","teachers","headteachers","academics","delegations","reports","insights","users","notifications","compliance","audit","settings"],
+    principal:["dashboard","operations","history","delegations","reports","insights","notifications","compliance"],
+    class_teacher:["dashboard","my_class","attendance","my_subjects","students","history","reports","insights","notifications"],
+    subject_teacher:["dashboard","my_subjects","students","history","reports","insights","notifications"],
     parent_guardian:["dashboard","children","notifications"]
   });
 
@@ -81,7 +85,8 @@
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
     packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
     attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null,
-    licenseConsole:null, platformPackageConsole:null, delegationConsole:null, myEmergencyDelegations:[]
+    licenseConsole:null, platformPackageConsole:null, delegationConsole:null, myEmergencyDelegations:[],
+    operationsConsole:null, historyStudentId:"", historyData:null, complianceConsole:null, analyticsData:null
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -218,7 +223,15 @@
 
   async function rpc(name,args={}) {
     const {data,error}=await state.client.rpc(name,args);
-    if(error) throw error;
+    if(error) {
+      if(state.session&&(error.code==="42501"||/access denied|not authorised|not authorized|permission denied/i.test(error.message||""))&&name!=="record_security_event") {
+        state.client.rpc("record_security_event",{
+          event_type_text:"authorization_denied",severity_text:"warning",message_text:`Denied RPC operation: ${name}`,
+          details_data:{rpc:name,code:error.code||"",message:String(error.message||"").slice(0,500),view:state.view},source_text:"web_client"
+        }).catch(()=>{});
+      }
+      throw error;
+    }
     state.lastSync=new Date();
     return data;
   }
@@ -399,9 +412,11 @@
     }
     await refreshPendingCount();
 
-    const verifyToken=new URLSearchParams(location.search).get("verify");
-    if(verifyToken) {
-      await showVerification(verifyToken);
+    const params=new URLSearchParams(location.search);
+    const verifyToken=params.get("verify");
+    const transcriptToken=params.get("transcript");
+    if(verifyToken||transcriptToken) {
+      await showVerification(verifyToken||transcriptToken,Boolean(transcriptToken));
       setLoading(false);
       return;
     }
@@ -441,7 +456,7 @@
   async function logout() {
     disconnectRealtime();
     await state.client?.auth.signOut();
-    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.delegationConsole=null;state.myEmergencyDelegations=[];
+    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.delegationConsole=null;state.myEmergencyDelegations=[];state.operationsConsole=null;state.historyData=null;state.complianceConsole=null;state.analyticsData=null;
     state.templateUrls.clear();state.templateCanvases.clear();
     showOnly("authView");setLoading(false);
   }
@@ -593,8 +608,8 @@
     const token=state.viewToken;
     try {
       const renderer={
-        dashboard:renderDashboard,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,delegations:renderEmergencyDelegations,reports:renderReports,
-        children:renderChildren,users:renderUsers,notifications:renderNotifications,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
+        dashboard:renderDashboard,operations:renderOperations,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,history:renderAcademicHistory,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,delegations:renderEmergencyDelegations,reports:renderReports,insights:renderInsights,
+        children:renderChildren,users:renderUsers,notifications:renderNotifications,compliance:renderCompliance,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
       }[view];
       await renderer?.(token,force);
       if(token===state.viewToken&&role()!=="platform_super_admin") {const banner=licenseBannerHtml();if(banner)byId("content")?.insertAdjacentHTML("afterbegin",banner);}
@@ -634,7 +649,7 @@
   function handleRealtime(topic,payload) {
     state.lastSync=new Date();setSync("online","Live");
     const table=payload?.payload?.table||payload?.table||"";
-    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations"].includes(table))state.workspace=null;
+    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations","academic_period_controls","report_correction_requests","student_lifecycle_events","transcript_issuances","privacy_requests","security_events","recovery_test_runs"].includes(table))state.workspace=null;
     if(table==="report_card_templates"){state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear()}
     if(topic.startsWith("user:")||table==="notifications") loadNotificationCount();
     clearTimeout(handleRealtime.timer);
@@ -650,6 +665,10 @@
         else navigate(state.view,true);
       } else if(state.view==="academics"&&topic==="school:global") renderAcademics(state.viewToken,true);
       else if(state.view==="delegations") renderEmergencyDelegations(state.viewToken,true);
+      else if(state.view==="operations") renderOperations(state.viewToken,true);
+      else if(state.view==="history") renderAcademicHistory(state.viewToken,true);
+      else if(state.view==="insights") renderInsights(state.viewToken,true);
+      else if(state.view==="compliance") renderCompliance(state.viewToken,true);
       else if(state.view==="my_class") renderMyClass(state.viewToken,true);
       else if(state.view==="my_subjects") renderMySubjects(state.viewToken,true);
       else if(state.view==="notifications") renderNotifications(state.viewToken,true);
@@ -872,6 +891,22 @@
     if(state.attendanceClassId)await loadAttendanceRegister(token);
     else byId("attendanceResults").innerHTML=`<div class="empty"><strong>No class-teacher assignment</strong><span>Ask the System Administrator to assign you as a class teacher.</span></div>`;
   }
+  function attendanceStatusButtons(row) {
+    return [["present","Present"],["absent","Absent"],["late","Late"],["excused","Excused"]].map(([value,label])=>`<button type="button" class="attendance-status-button ${row.attendance_status===value?"active":""}" data-attendance-button="${attr(row.enrollment_id)}" data-status="${value}" aria-pressed="${row.attendance_status===value?"true":"false"}">${label}</button>`).join("");
+  }
+  function updateAttendanceSummary(root=byId("attendanceResults")) {
+    const counts={present:0,absent:0,late:0,excused:0,unmarked:0};
+    $$('[data-attendance-enrollment]',root).forEach(select=>{if(select.value&&counts[select.value]!==undefined)counts[select.value]++;else counts.unmarked++});
+    Object.entries(counts).forEach(([key,value])=>{const target=byId(`attendanceCount-${key}`);if(target)target.textContent=number(value)});
+    const disabled=!licenseCanWrite()||counts.unmarked>0||!$$('[data-attendance-enrollment]',root).length;
+    const save=byId("attendanceSave"),top=byId("attendanceSaveTop");if(save)save.disabled=disabled;if(top)top.disabled=disabled;
+    const stateText=byId("attendanceSaveState");if(stateText)stateText.textContent=counts.unmarked?`${number(counts.unmarked)} student${counts.unmarked===1?"":"s"} unmarked`:"All students marked and ready to save";
+  }
+  function setAttendanceStatus(enrollmentId,status,root=byId("attendanceResults")) {
+    const select=$(`[data-attendance-enrollment="${CSS.escape(enrollmentId)}"]`,root);if(!select)return;select.value=status;
+    $$(`[data-attendance-button="${CSS.escape(enrollmentId)}"]`,root).forEach(button=>{const active=button.dataset.status===status;button.classList.toggle("active",active);button.setAttribute("aria-pressed",String(active))});
+    updateAttendanceSummary(root);
+  }
   async function loadAttendanceRegister(token=state.viewToken) {
     const root=byId("attendanceResults");if(!root||!state.attendanceClassId||!state.attendanceTermId||!state.attendanceDate)return;
     root.innerHTML=`<div class="empty">Loading attendance register</div>`;
@@ -880,29 +915,37 @@
     state.attendanceData=data;
     const rows=data.students||[],opened=Number(data.days_school_opened||0),marked=Boolean(data.register?.id);
     root.innerHTML=`
-      <div class="panel-header"><div><h3>${esc(data.class?.name||"Assigned Class")}</h3><p>${isoDate(state.attendanceDate)} • ${marked?"Attendance already recorded":"New attendance register"}</p></div>
-        <div class="button-row"><button class="button outline small" id="attendanceAllPresent" type="button" ${rows.length&&licenseCanWrite()?"":"disabled"}>Mark all present</button><button class="button primary" id="attendanceSave" type="button" ${rows.length&&licenseCanWrite()?"":"disabled"}>Save attendance</button></div></div>
-      <div class="panel-body">
+      <div class="panel-header attendance-header"><div><h3>${esc(data.class?.name||"Assigned Class")}</h3><p>${isoDate(state.attendanceDate)} • ${marked?"Attendance already recorded":"New attendance register"}</p></div>
+        <div class="button-row"><button class="button outline small" id="attendanceAllPresent" type="button" ${rows.length&&licenseCanWrite()?"":"disabled"}>Mark all present</button><button class="button primary attendance-desktop-save" id="attendanceSaveTop" type="button" ${rows.length&&licenseCanWrite()?"":"disabled"}>Save attendance</button></div></div>
+      <div class="panel-body attendance-body">
         <div class="metric-row attendance-summary"><div class="metric"><span>Students</span><strong>${number(rows.length)}</strong></div><div class="metric"><span>School days recorded</span><strong>${number(opened)}</strong></div><div class="metric"><span>Selected date</span><strong>${esc(marked?"Recorded":"Not recorded")}</strong></div></div>
-        ${rows.length?`<div class="table-wrap"><table><thead><tr><th>Student</th><th>Admission No.</th><th>Daily status</th><th>Term attendance</th></tr></thead><tbody>
-          ${rows.map(row=>`<tr><td><div class="cell-copy"><strong>${esc(row.full_name)}</strong><small>${row.roll_number?`Roll ${esc(row.roll_number)}`:""}</small></div></td><td>${esc(row.admission_no)}</td>
-            <td><select class="attendance-status-select" data-attendance-enrollment="${attr(row.enrollment_id)}">${attendanceStatusOptions(row.attendance_status)}</select></td>
-            <td><strong>${number(row.days_present)} / ${number(row.days_school_opened)}</strong><small class="attendance-term-label"> days present</small></td></tr>`).join("")}
-        </tbody></table></div><label class="field attendance-notes"><span>Attendance note (optional)</span><textarea id="attendanceNotes">${esc(data.register?.notes||"")}</textarea></label>`:
+        ${rows.length?`
+        <div class="attendance-live-summary" aria-live="polite"><span>Present <b id="attendanceCount-present">0</b></span><span>Absent <b id="attendanceCount-absent">0</b></span><span>Late <b id="attendanceCount-late">0</b></span><span>Excused <b id="attendanceCount-excused">0</b></span><span>Unmarked <b id="attendanceCount-unmarked">0</b></span></div>
+        <label class="field attendance-search-field"><span>Find student</span><input id="attendanceSearch" type="search" placeholder="Name or admission number" autocomplete="off"></label>
+        <div class="attendance-mobile-list">${rows.map(row=>`<article class="attendance-student-card" data-attendance-card data-search="${attr(`${row.full_name} ${row.admission_no}`.toLowerCase())}"><div class="attendance-student-identity"><div class="student-avatar-placeholder" aria-hidden="true">${esc((row.full_name||"?").slice(0,1).toUpperCase())}</div><div><strong>${esc(row.full_name)}</strong><small>${esc(row.admission_no)}${row.roll_number?` • Roll ${esc(row.roll_number)}`:""}</small></div></div><div class="attendance-status-buttons" role="group" aria-label="Attendance status for ${attr(row.full_name)}">${attendanceStatusButtons(row)}</div><div class="attendance-term-total">Term total: <strong>${number(row.days_present)} / ${number(row.days_school_opened)}</strong> days present</div></article>`).join("")}</div>
+        <div class="table-wrap attendance-desktop-table"><table><thead><tr><th>Student</th><th>Admission No.</th><th>Daily status</th><th>Term attendance</th></tr></thead><tbody>
+          ${rows.map(row=>`<tr><td><div class="cell-copy"><strong>${esc(row.full_name)}</strong><small>${row.roll_number?`Roll ${esc(row.roll_number)}`:""}</small></div></td><td>${esc(row.admission_no)}</td><td><select class="attendance-status-select" data-attendance-enrollment="${attr(row.enrollment_id)}" aria-label="Attendance status for ${attr(row.full_name)}">${attendanceStatusOptions(row.attendance_status||"")}</select></td><td><strong>${number(row.days_present)} / ${number(row.days_school_opened)}</strong><small class="attendance-term-label"> days present</small></td></tr>`).join("")}
+        </tbody></table></div><label class="field attendance-notes"><span>Attendance note (optional)</span><textarea id="attendanceNotes">${esc(data.register?.notes||"")}</textarea></label>
+        <div class="attendance-sticky-save"><div><strong>${esc(data.class?.name||"Class attendance")}</strong><small id="attendanceSaveState">Review all students before saving</small></div><button class="button primary" id="attendanceSave" type="button">Save attendance</button></div>`:
         `<div class="empty"><strong>No students found</strong><span>No active student records are enrolled in this class for the selected term.</span></div>`}
       </div>`;
-    byId("attendanceAllPresent")?.addEventListener("click",()=>$$('[data-attendance-enrollment]',root).forEach(select=>{select.value="present"}));
-    byId("attendanceSave")?.addEventListener("click",saveClassAttendance);
+    byId("attendanceAllPresent")?.addEventListener("click",()=>$$('[data-attendance-enrollment]',root).forEach(select=>setAttendanceStatus(select.dataset.attendanceEnrollment,"present",root)));
+    byId("attendanceSave")?.addEventListener("click",saveClassAttendance);byId("attendanceSaveTop")?.addEventListener("click",saveClassAttendance);
+    $$('[data-attendance-button]',root).forEach(button=>button.onclick=()=>setAttendanceStatus(button.dataset.attendanceButton,button.dataset.status,root));
+    $$('[data-attendance-enrollment]',root).forEach(select=>select.onchange=()=>setAttendanceStatus(select.dataset.attendanceEnrollment,select.value,root));
+    byId("attendanceSearch")?.addEventListener("input",()=>{const q=byId("attendanceSearch").value.trim().toLowerCase();$$('[data-attendance-card]',root).forEach(card=>card.hidden=q&&!card.dataset.search.includes(q))});
+    updateAttendanceSummary(root);
   }
   async function saveClassAttendance() {
-    const button=byId("attendanceSave"),entries=$$('[data-attendance-enrollment]',byId("attendanceResults")).map(select=>({enrollment_id:select.dataset.attendanceEnrollment,attendance_status:select.value}));
+    const button=byId("attendanceSave"),top=byId("attendanceSaveTop"),entries=$$('[data-attendance-enrollment]',byId("attendanceResults")).map(select=>({enrollment_id:select.dataset.attendanceEnrollment,attendance_status:select.value}));
     if(!entries.length)return;
-    button.disabled=true;button.textContent="Saving";
+    [button,top].filter(Boolean).forEach(item=>{item.disabled=true;item.dataset.originalText=item.textContent;item.textContent="Saving"});
+    const stateText=byId("attendanceSaveState");if(stateText)stateText.textContent="Saving securely";
     try{
       const data=await rpc("save_class_attendance",{target_term_id:state.attendanceTermId,target_class_id:state.attendanceClassId,target_date:state.attendanceDate,entries,notes_text:byId("attendanceNotes")?.value.trim()||""});
       state.attendanceData=data;state.workspace=null;toast("Attendance saved",`${number(data.days_school_opened||0)} school day${Number(data.days_school_opened||0)===1?"":"s"} recorded for this term.`);await loadAttendanceRegister();
-    }catch(error){toast("Attendance not saved",friendlyError(error),"error",6500)}
-    finally{if(button){button.disabled=false;button.textContent="Save attendance"}}
+    }catch(error){if(stateText)stateText.textContent="Not saved. Check the connection and retry.";toast("Attendance not saved",`${friendlyError(error)} Your marked selections remain on this screen for retry.`,"error",7500)}
+    finally{[button,top].filter(Boolean).forEach(item=>{item.disabled=false;item.textContent=item.dataset.originalText||"Save attendance"});updateAttendanceSummary()}
   }
 
   async function renderMySubjects(token,force=false) {
@@ -1199,27 +1242,38 @@
     const headers=rows[0].map(h=>h.trim().toLowerCase().replace(/\s+/g,"_"));
     return rows.slice(1).map(values=>Object.fromEntries(headers.map((h,i)=>[h,(values[i]||"").trim()])));
   }
+  function importValidationHtml(result) {
+    const errors=result.errors||[];
+    return `<div class="metric-row wrap">${maturityMetric("Rows",number(result.total))}${maturityMetric("Valid",number(result.valid_count))}${maturityMetric("Invalid",number(result.invalid_count))}</div>
+      ${errors.length?`<div class="import-error-list"><div class="section-title"><h4>Rows requiring correction</h4><button class="button ghost small" id="importErrorsDownload" type="button">Download errors</button></div><div class="compact-scroll"><table><thead><tr><th>Row</th><th>Issue</th></tr></thead><tbody>${errors.slice(0,100).map(item=>`<tr><td>${number(item.row_number)}</td><td>${esc(item.message)}</td></tr>`).join("")}</tbody></table></div></div>`:`<div class="template-information success"><strong>Validation passed</strong><span>All rows are eligible for import.</span></div>`}`;
+  }
+  function downloadImportErrors(result,filename="import-errors.csv") {
+    const rows=(result.errors||[]).map(item=>[item.row_number,item.message,JSON.stringify(item.payload||{})]);
+    downloadText(filename,["row_number,message,payload",...rows.map(row=>row.map(csvCell).join(","))].join("\n"),"text/csv");
+  }
   function openStudentImport() {
-    modal("Import Students","CSV student registration",`
+    modal("Import Students","CSV student registration with server-side validation and preview",`
       <form id="studentImportForm" class="form-stack">
         <div class="form-grid">
           <label class="field"><span>Academic year</span><select name="academic_year_id" required>${optionList(state.boot.academic_years||[],"id","name",activeYear()?.id)}</select></label>
           <label class="field"><span>Class</span><select name="class_id" required>${optionList(state.boot.classes||[],"id","name")}</select></label>
         </div>
         <label class="file-drop"><strong>CSV file</strong><input name="file" type="file" accept=".csv,text/csv" required></label>
+        <div id="studentImportPreview"></div>
       </form>`,
-      `<button class="button ghost" id="importCancel" type="button">Cancel</button><button class="button primary" id="importRun" type="button">Import</button>`,"small");
+      `<button class="button ghost" id="importCancel" type="button">Cancel</button><button class="button secondary" id="importValidate" type="button">Validate</button><button class="button primary" id="importRun" type="button" disabled>Import valid rows</button>`,"small");
     byId("importCancel").onclick=closeModal;
+    let validation=null,fileName="";
+    byId("importValidate").onclick=async()=>{
+      const form=byId("studentImportForm"),file=form.elements.file.files[0];if(!file){toast("Select a CSV file","Choose the file before validation.","warning");return}
+      const values=formObject(form),rows=parseCsv(await file.text()),button=byId("importValidate");button.disabled=true;button.textContent="Validating";
+      try{validation=await rpc("validate_student_import",{rows,target_academic_year_id:values.academic_year_id,target_class_id:values.class_id,filename:file.name});fileName=file.name;byId("studentImportPreview").innerHTML=importValidationHtml(validation);byId("importRun").disabled=!validation.valid_count;byId("importErrorsDownload")?.addEventListener("click",()=>downloadImportErrors(validation,"student-import-errors.csv"));toast("Validation completed",`${number(validation.valid_count)} valid, ${number(validation.invalid_count)} invalid.`,validation.invalid_count?"warning":"success")}
+      catch(error){toast("Validation unsuccessful",friendlyError(error),"error")}finally{button.disabled=false;button.textContent="Validate"}
+    };
     byId("importRun").onclick=async()=>{
-      const form=byId("studentImportForm"),file=form.elements.file.files[0];if(!file)return;
-      const values=formObject(form),rows=parseCsv(await file.text()).map(row=>({...row,academic_year_id:values.academic_year_id,class_id:values.class_id}));
-      const button=byId("importRun");button.disabled=true;
-      try {
-        const result=await rpc("bulk_import_students",{rows,filename:file.name});
-        closeModal();toast("Import completed",`${result.successful} saved, ${result.failed} failed`,result.failed?"warning":"success",7000);
-        await loadStudentPage();
-      } catch(error){toast("Import unsuccessful",friendlyError(error),"error")}
-      finally{button.disabled=false}
+      if(!validation?.valid_count)return;const button=byId("importRun");button.disabled=true;
+      try {const result=await rpc("bulk_import_students",{rows:validation.valid_rows,filename:fileName});closeModal();toast("Import completed",`${result.successful} saved, ${result.failed} failed`,result.failed?"warning":"success",7000);await loadStudentPage()}
+      catch(error){toast("Import unsuccessful",friendlyError(error),"error")}finally{button.disabled=false}
     };
   }
   async function exportStudentsCsv() {
@@ -2334,7 +2388,7 @@
     if(allowed.has("published"))buttons.push(`<button class="button success full" data-transition="published">${report.status==="withdrawn"?"Republish report":"Publish report"}</button>`);
     if(allowed.has("returned"))buttons.push(`<button class="button warning full" data-transition="returned">Return for correction</button>`);
     if(report.status==="published"&&!publication?.storage_path&&can("publish_reports"))buttons.push(`<button class="button primary full" id="reportGeneratePdf">Create official PDF</button>`);
-    if(["published","approved"].includes(report.status)&&can("approve_reports"))buttons.push(`<button class="button warning full" id="reportCorrection">Open correction</button>`);
+    if(["published","approved"].includes(report.status)&&["system_admin","class_teacher","subject_teacher"].includes(role()))buttons.push(`<button class="button warning full" id="reportCorrection">Request correction</button>`);
     if(allowed.has("withdrawn"))buttons.push(`<button class="button danger full" data-transition="withdrawn">Withdraw publication</button>`);
     return buttons.join("")||`<span class="help-text">No workflow action available</span>`;
   }
@@ -2412,13 +2466,15 @@
     };
   }
   async function openCorrection() {
-    modal("Open Report Correction","Published records remain preserved in revision history",`<label class="field"><span>Correction reason</span><textarea id="correctionReason" required></textarea></label>`,
-      `<button class="button ghost" id="correctionCancel" type="button">Cancel</button><button class="button warning" id="correctionOpen" type="button">Open correction</button>`,"small");
+    modal("Request Report Correction","The Principal must approve the request before the report is reopened. The original publication and revision remain preserved.",`<label class="field"><span>Correction reason</span><textarea id="correctionReason" required placeholder="Describe the exact error and the fields that must be corrected"></textarea></label>`,
+      `<button class="button ghost" id="correctionCancel" type="button">Cancel</button><button class="button warning" id="correctionOpen" type="button">Submit request</button>`,"small");
     byId("correctionCancel").onclick=closeModal;
     byId("correctionOpen").onclick=async()=>{
-      const reason=byId("correctionReason").value.trim();if(!reason)return;
-      try{state.reportEditor=await rpc("begin_report_correction",{target_report_id:state.reportEditor.report.id,reason_text:reason});await enrichReportPromotion(state.reportEditor);closeModal();renderReportEditor();toast("Correction opened")}
-      catch(error){toast("Correction not opened",friendlyError(error),"error")}
+      const reason=byId("correctionReason").value.trim();if(reason.length<10){toast("Correction not requested","Provide a clear reason of at least ten characters.","error");return}
+      const button=byId("correctionOpen");button.disabled=true;
+      try{await rpc("request_report_correction",{target_report_id:state.reportEditor.report.id,reason_text:reason,requested_fields:[]});closeModal();toast("Correction request submitted","The Principal has been notified for review.");}
+      catch(error){toast("Correction not requested",friendlyError(error),"error")}
+      finally{button.disabled=false}
     };
   }
   async function openRevisionHistory() {
@@ -2451,21 +2507,15 @@
   async function openScoreImport() {
     const visibleClasses=await editableClassesForCurrentRole();
     if(!visibleClasses.length){toast("No score-entry assignment","No active class or emergency delegation is available for score import.","warning",7000);return}
-    modal("Import Scores","CSV assessment score entries",`<form id="scoreImportForm" class="form-stack">
+    modal("Import Scores","CSV assessment entries with server-side validation and row-level error reporting",`<form id="scoreImportForm" class="form-stack">
       <div class="form-grid"><label class="field"><span>Term</span><select name="term_id" required>${optionList(state.boot.terms||[],"id","name",activeTerm()?.id)}</select></label>
       <label class="field"><span>Class</span><select name="class_id" required>${optionList(visibleClasses,"id","name")}</select></label></div>
-      <label class="file-drop"><strong>CSV file</strong><input name="file" type="file" accept=".csv,text/csv" required></label>
-    </form>`,`<button class="button ghost" id="scoreImportCancel" type="button">Cancel</button><button class="button primary" id="scoreImportRun" type="button">Import</button>`,"small");
-    byId("scoreImportCancel").onclick=closeModal;
-    byId("scoreImportRun").onclick=async()=>{
-      const form=byId("scoreImportForm"),v=formObject(form),file=form.elements.file.files[0];if(!file)return;
-      const rows=parseCsv(await file.text()),button=byId("scoreImportRun");button.disabled=true;
-      try{const result=await rpc("bulk_import_scores",{target_term_id:v.term_id,target_class_id:v.class_id,rows,filename:file.name});
-        closeModal();toast("Score import completed",`${result.successful} saved, ${result.failed} failed`,result.failed?"warning":"success",7000);await loadReportPage()}
-      catch(error){toast("Score import unsuccessful",friendlyError(error),"error")}finally{button.disabled=false}
-    };
+      <label class="file-drop"><strong>CSV file</strong><input name="file" type="file" accept=".csv,text/csv" required></label><div id="scoreImportPreview"></div>
+    </form>`,`<button class="button ghost" id="scoreImportCancel" type="button">Cancel</button><button class="button secondary" id="scoreImportValidate" type="button">Validate</button><button class="button primary" id="scoreImportRun" type="button" disabled>Import valid rows</button>`,"small");
+    byId("scoreImportCancel").onclick=closeModal;let validation=null,fileName="",selected={};
+    byId("scoreImportValidate").onclick=async()=>{const form=byId("scoreImportForm"),v=formObject(form),file=form.elements.file.files[0];if(!file){toast("Select a CSV file","Choose the file before validation.","warning");return}const rows=parseCsv(await file.text()),button=byId("scoreImportValidate");button.disabled=true;button.textContent="Validating";try{validation=await rpc("validate_score_import",{target_term_id:v.term_id,target_class_id:v.class_id,rows,filename:file.name});selected=v;fileName=file.name;byId("scoreImportPreview").innerHTML=importValidationHtml(validation);byId("scoreImportRun").disabled=!validation.valid_count;byId("importErrorsDownload")?.addEventListener("click",()=>downloadImportErrors(validation,"score-import-errors.csv"));toast("Validation completed",`${number(validation.valid_count)} valid, ${number(validation.invalid_count)} invalid.`,validation.invalid_count?"warning":"success")}catch(error){toast("Validation unsuccessful",friendlyError(error),"error")}finally{button.disabled=false;button.textContent="Validate"}};
+    byId("scoreImportRun").onclick=async()=>{if(!validation?.valid_count)return;const button=byId("scoreImportRun");button.disabled=true;try{const result=await rpc("bulk_import_scores",{target_term_id:selected.term_id,target_class_id:selected.class_id,rows:validation.valid_rows,filename:fileName});closeModal();toast("Score import completed",`${result.successful} saved, ${result.failed} failed`,result.failed?"warning":"success",7000);await loadReportPage()}catch(error){toast("Score import unsuccessful",friendlyError(error),"error")}finally{button.disabled=false}};
   }
-
   function openManualReportTemplate() {
     const years=(state.boot.academic_years||[]).filter(item=>!item.deleted_at);
     const classes=(state.boot.classes||[]).filter(item=>item.active!==false&&!item.deleted_at);
@@ -4558,7 +4608,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.9.2 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.0.1 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4583,13 +4633,170 @@
   }
 
 
+  // ---------------------------------------------------------------------------
+  // Report Card Enterprise v7.0.1 production maturity suite
+  // ---------------------------------------------------------------------------
+  function selectedTermId(selectId="maturityTerm") {
+    return byId(selectId)?.value||activeTerm()?.id||(state.boot?.terms||[])[0]?.id||"";
+  }
+  function selectedClassId(selectId="maturityClass") {return byId(selectId)?.value||""}
+  function percentValue(value){return Math.max(0,Math.min(100,Number(value||0)))}
+  function statusText(value){return String(value||"unknown").replaceAll("_"," ")}
+  function emptyState(title,detail="") {return `<div class="empty"><strong>${esc(title)}</strong>${detail?`<span>${esc(detail)}</span>`:""}</div>`}
+  function maturityMetric(label,value,detail="") {return `<div class="metric maturity-metric"><span>${esc(label)}</span><strong>${esc(value??"—")}</strong>${detail?`<small>${esc(detail)}</small>`:""}</div>`}
+  function dateInputValue(value){return value?dateTimeLocalValue(value):""}
+
+  async function renderOperations(token,force=false) {
+    const termId=state.operationsConsole?.term_id||activeTerm()?.id||(state.boot.terms||[])[0]?.id||"";
+    const [ops,corrections,controls,backupData,recovery]=await Promise.all([
+      rpc("operations_dashboard",{target_term_id:termId}),
+      rpc("get_report_correction_console",{target_term_id:termId,target_class_id:null}),
+      rpc("list_academic_period_controls"),
+      role()==="system_admin"?rpc("backup_dashboard").catch(()=>({backups:[]})):Promise.resolve({backups:[]}),
+      role()==="system_admin"?rpc("get_recovery_console").catch(()=>({tests:[]})):Promise.resolve({tests:[]})
+    ]);
+    if(token!==state.viewToken)return;
+    state.operationsConsole={...ops,corrections,controls,backupData,recovery,term_id:termId};
+    const control=ops.term_control||{},classes=state.boot.classes||[],progress=ops.class_progress||[],pending=(corrections.requests||[]).filter(item=>item.status==="pending");
+    const latestBackup=(backupData.backups||[]).find(item=>item.status==="completed"&&item.backup_type==="full");
+    const healthRisk=Number(ops.critical_security_events||0)>0||Number(ops.failed_backups_30d||0)>0||Number(ops.published_without_pdf||0)>0;
+    byId("content").innerHTML=`
+      <div class="page-head"><div><h3>Production Operations</h3><p>Academic deadlines, term locks, report corrections, alerts, health, and recovery readiness</p></div><div class="page-actions"><button class="button secondary" id="operationsRefresh">Refresh</button></div></div>
+      <section class="panel pad maturity-filter"><div class="form-grid three">
+        <label class="field"><span>Academic term</span><select id="operationsTerm">${optionList(state.boot.terms||[],"id","name",termId)}</select></label>
+        <label class="field"><span>Class for bulk report generation</span><select id="operationsClass">${optionList(classes,"id","name","","Select class")}</select></label>
+        <div class="field"><span>Operational state</span><strong class="health-indicator ${healthRisk?"attention":"healthy"}">${healthRisk?"Attention required":"Healthy"}</strong></div>
+      </div></section>
+      <div class="stat-grid maturity-stat-grid">
+        ${statCard("blue","◉","Expected reports",ops.reports_expected)}${statCard("purple","▤","Reports created",ops.reports_created)}
+        ${statCard("gold","⌛","Awaiting approval",ops.awaiting_approval)}${statCard("green","✓","Published",ops.published)}
+      </div>
+      <div class="grid two maturity-grid">
+        <section class="panel pad"><div class="section-title"><div><h4>Academic period control</h4><p>Set deadlines and freeze completed phases without altering historical records.</p></div></div>
+          <form id="periodControlForm" class="form-grid">
+            <label class="field"><span>Score-entry deadline</span><input type="datetime-local" name="score_entry_deadline" value="${attr(dateInputValue(control.score_entry_deadline))}"></label>
+            <label class="field"><span>Attendance deadline</span><input type="datetime-local" name="attendance_deadline" value="${attr(dateInputValue(control.attendance_deadline))}"></label>
+            <label class="field"><span>Report-submission deadline</span><input type="datetime-local" name="report_submission_deadline" value="${attr(dateInputValue(control.report_submission_deadline))}"></label>
+            <label class="field"><span>Principal-approval deadline</span><input type="datetime-local" name="principal_approval_deadline" value="${attr(dateInputValue(control.principal_approval_deadline))}"></label>
+            <label class="field"><span>Publication deadline</span><input type="datetime-local" name="publication_deadline" value="${attr(dateInputValue(control.publication_deadline))}"></label>
+            <div class="field"><span>Phase locks</span><div class="check-grid"><label><input type="checkbox" name="scores_locked" ${control.scores_locked?"checked":""}> Scores</label><label><input type="checkbox" name="attendance_locked" ${control.attendance_locked?"checked":""}> Attendance</label><label><input type="checkbox" name="reports_locked" ${control.reports_locked?"checked":""}> Reports</label></div></div>
+            <label class="field full"><span>Lock or reopening reason</span><textarea name="lock_reason" placeholder="Explain why the term is being locked or reopened">${esc(control.lock_reason||"")}</textarea></label>
+            <div class="full button-row"><button class="button primary" id="periodControlSave" type="button">Save period control</button><button class="button secondary" id="academicAlertsRun" type="button">Queue deadline alerts</button></div>
+          </form>
+        </section>
+        <section class="panel pad"><div class="section-title"><div><h4>System health</h4><p>Current production reliability indicators</p></div></div>
+          <div class="metric-row wrap">${maturityMetric("PDFs missing",number(ops.published_without_pdf))}${maturityMetric("Client errors, 24h",number(ops.client_errors_24h))}${maturityMetric("Open security events",number(ops.open_security_events))}${maturityMetric("Failed backups, 30d",number(ops.failed_backups_30d))}</div>
+          <div class="hr"></div>
+          <div class="diff-row"><span>Latest full backup</span><b>${isoDateTime(ops.latest_backup)}</b></div>
+          <div class="diff-row"><span>Latest verified backup</span><b>${isoDateTime(ops.latest_verified_backup)}</b></div>
+          <div class="diff-row"><span>Latest recovery rehearsal</span><b>${isoDateTime(ops.latest_recovery_test)}</b></div>
+          <div class="diff-row"><span>Attendance classes marked today</span><b>${number(ops.attendance_classes_today)} / ${number(ops.active_classes)}</b></div>
+          <div class="diff-row"><span>Pending notification deliveries</span><b>${number(ops.pending_notifications)}</b></div>
+          ${role()==="system_admin"?`<div class="button-row" style="margin-top:15px"><button class="button secondary" id="recoveryRun" ${latestBackup?"":"disabled"}>Run recovery rehearsal</button></div>`:""}
+        </section>
+      </div>
+      <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Class report progress</h3><p>Created, submitted, approved, and published records by class</p></div><button class="button outline small" id="generateMissingReports">Preview missing reports</button></div>
+        ${progress.length?`<div class="table-wrap"><table><thead><tr><th>Class</th><th>Enrolled</th><th>Created</th><th>Submitted</th><th>Approved</th><th>Published</th><th>Completion</th></tr></thead><tbody>${progress.map(item=>{const pct=item.enrolled?Math.round(Number(item.published||0)/Number(item.enrolled)*100):0;return `<tr><td><strong>${esc(item.class_name)}</strong></td><td>${number(item.enrolled)}</td><td>${number(item.created)}</td><td>${number(item.submitted)}</td><td>${number(item.approved)}</td><td>${number(item.published)}</td><td><div class="inline-progress"><span style="width:${pct}%"></span></div><small>${pct}%</small></td></tr>`}).join("")}</tbody></table></div>`:emptyState("No class progress available")}
+      </section>
+      <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Published-report correction requests</h3><p>Original reports remain preserved; approved requests reopen controlled editing.</p></div><span class="chip">${number(pending.length)} pending</span></div>
+        ${(corrections.requests||[]).length?`<div class="table-wrap"><table><thead><tr><th>Student and report</th><th>Class</th><th>Request</th><th>Status</th><th>Review</th></tr></thead><tbody>${(corrections.requests||[]).map(item=>`<tr><td><div class="cell-copy"><strong>${esc(item.student_name)}</strong><small>${esc(item.report_number||"Report")} • ${esc(item.term_name)}</small></div></td><td>${esc(item.class_name)}</td><td><div class="cell-copy"><strong>${esc(item.requester_name||"Authorised user")}</strong><small>${esc(item.reason)}</small></div></td><td>${statusBadge(item.status)}</td><td>${role()==="principal"&&item.status==="pending"?`<div class="button-row compact"><button class="button success small" data-correction-review="${attr(item.id)}" data-decision="approved">Approve</button><button class="button warning small" data-correction-review="${attr(item.id)}" data-decision="rejected">Reject</button></div>`:`<small>${esc(item.reviewer_name||item.review_note||"Awaiting review")}</small>`}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No correction requests")}
+      </section>
+      ${role()==="system_admin"?`<section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Recovery rehearsal history</h3><p>Non-destructive decrypt, reconstruction, and checksum tests</p></div></div>${(recovery.tests||[]).length?`<div class="table-wrap"><table><thead><tr><th>Started</th><th>Status</th><th>Tables</th><th>Rows</th><th>Storage objects</th><th>Notes</th></tr></thead><tbody>${(recovery.tests||[]).map(item=>`<tr><td>${isoDateTime(item.started_at)}</td><td>${statusBadge(item.status)}</td><td>${number(item.checked_tables)}</td><td>${number(item.checked_rows)}</td><td>${number(item.checked_storage_objects)}</td><td>${esc(item.notes||item.error_message||"—")}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No recovery rehearsal has been recorded")}</section>`:""}`;
+    byId("operationsTerm").onchange=()=>{state.operationsConsole={term_id:byId("operationsTerm").value};renderOperations(token,true)};
+    byId("operationsRefresh").onclick=()=>renderOperations(token,true);
+    byId("periodControlSave").onclick=savePeriodControl;
+    byId("academicAlertsRun").onclick=runAcademicAlerts;
+    byId("generateMissingReports").onclick=previewMissingReports;
+    byId("recoveryRun")?.addEventListener("click",()=>runRecoveryRehearsal(latestBackup?.id));
+    $$('[data-correction-review]').forEach(button=>button.onclick=()=>reviewCorrectionRequest(button.dataset.correctionReview,button.dataset.decision));
+  }
+
+  async function savePeriodControl() {
+    const form=byId("periodControlForm"),values=formObject(form),button=byId("periodControlSave"),termId=byId("operationsTerm").value;
+    const locked=form.elements.scores_locked.checked||form.elements.attendance_locked.checked||form.elements.reports_locked.checked;
+    if(locked&&values.lock_reason.trim().length<5){toast("Period control not saved","Provide a clear reason before locking an academic phase.","error");return}
+    button.disabled=true;
+    try{await rpc("save_academic_period_control",{payload:{term_id:termId,...values,scores_locked:form.elements.scores_locked.checked,attendance_locked:form.elements.attendance_locked.checked,reports_locked:form.elements.reports_locked.checked}});toast("Academic period control saved");await renderOperations(state.viewToken,true)}
+    catch(error){toast("Period control not saved",friendlyError(error),"error",7500)}finally{button.disabled=false}
+  }
+  async function runAcademicAlerts(){const button=byId("academicAlertsRun");button.disabled=true;try{const result=await rpc("run_academic_alerts",{target_term_id:byId("operationsTerm").value});toast("Academic alerts queued",`${number(result.queued)} new notification${Number(result.queued)===1?"":"s"} queued.`);await loadNotificationCount()}catch(error){toast("Alerts not queued",friendlyError(error),"error")}finally{button.disabled=false}}
+  async function previewMissingReports(){const termId=byId("operationsTerm").value,classId=byId("operationsClass").value;if(!classId){toast("Select a class","Choose the class before previewing missing reports.","warning");return}try{const preview=await rpc("bulk_generate_missing_reports",{target_term_id:termId,target_class_id:classId,preview_only:true});if(!preview.missing_reports){toast("No missing reports","Every active student already has a report for this term.");return}if(!await confirmAction("Generate missing draft reports",`${number(preview.missing_reports)} missing report record(s) will be created. Existing reports will not be changed.`,"Generate reports"))return;const result=await rpc("bulk_generate_missing_reports",{target_term_id:termId,target_class_id:classId,preview_only:false});toast("Draft reports generated",`${number(result.created_reports)} report record(s) created.`);await renderOperations(state.viewToken,true)}catch(error){toast("Reports not generated",friendlyError(error),"error",7500)}}
+  async function reviewCorrectionRequest(id,decision){modal(`${decision==="approved"?"Approve":"Reject"} correction request`,"Principal oversight",`<label class="field"><span>Review note</span><textarea id="correctionReviewNote" placeholder="Record the approval conditions or rejection reason"></textarea></label>`,`<button class="button ghost" id="correctionReviewCancel">Cancel</button><button class="button ${decision==="approved"?"success":"warning"}" id="correctionReviewConfirm">${decision==="approved"?"Approve":"Reject"}</button>`,"small");byId("correctionReviewCancel").onclick=closeModal;byId("correctionReviewConfirm").onclick=async()=>{const button=byId("correctionReviewConfirm");button.disabled=true;try{await rpc("review_report_correction",{target_request_id:id,decision,review_note_text:byId("correctionReviewNote").value.trim()});closeModal();toast("Correction request reviewed");await renderOperations(state.viewToken,true)}catch(error){toast("Review not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
+  async function runRecoveryRehearsal(backupId){if(!backupId)return;if(!await confirmAction("Run recovery rehearsal","The latest completed encrypted backup will be decrypted and reconstructed in memory. Production records will not be overwritten.","Run rehearsal"))return;const button=byId("recoveryRun");button.disabled=true;setSync("pending","Testing recovery");try{const {data,error}=await state.client.functions.invoke("scheduled-backup",{body:{action:"recovery_test",backup_id:backupId}});if(error)throw error;toast("Recovery rehearsal passed",`${number(data.checked_tables)} tables, ${number(data.checked_rows)} rows, and ${number(data.checked_storage_objects)} storage objects verified.`);setSync("online","Synced");await renderOperations(state.viewToken,true)}catch(error){toast("Recovery rehearsal failed",friendlyError(error),"error",9000);setSync("pending","Attention required")}finally{button.disabled=false}}
+
+  async function renderAcademicHistory(token,force=false) {
+    const visibleClasses=await visibleClassesForCurrentRole();
+    let students=[];
+    try{const result=await rpc("search_students_v5",{search_text:"",target_class_id:null,target_status:null,archive_filter:"all",page_number:1,page_size:100});students=result.rows||[]}catch(_){students=[]}
+    if(token!==state.viewToken)return;
+    if(!state.historyStudentId&&students.length)state.historyStudentId=students[0].id;
+    if(state.historyStudentId){try{state.historyData=await rpc("get_student_academic_history",{target_student_id:state.historyStudentId})}catch(error){state.historyData={error:friendlyError(error)}}}
+    const data=state.historyData||{},transcript=data.transcript||{},student=transcript.student||{},records=transcript.academic_records||[],lifecycle=transcript.lifecycle||[],issuances=data.issuances||[];
+    const filtered=students.filter(item=>!visibleClasses.length||visibleClasses.some(c=>c.id===item.current_class_id)||["system_admin","principal"].includes(role()));
+    byId("content").innerHTML=`
+      <div class="page-head"><div><h3>Student Academic History</h3><p>Cumulative records, lifecycle events, transcripts, and public verification</p></div><div class="page-actions">${["system_admin","principal"].includes(role())&&student.id?`<button class="button primary" id="transcriptIssue">Issue transcript</button>`:""}${role()==="system_admin"&&student.id?`<button class="button secondary" id="lifecycleAdd">Record lifecycle event</button>`:""}</div></div>
+      <section class="panel pad"><div class="form-grid"><label class="field"><span>Find student</span><input id="historySearch" type="search" placeholder="Search name or admission number"></label><label class="field"><span>Student</span><select id="historyStudent">${optionList(filtered.map(item=>({...item,label:`${item.full_name||fullName(item)} • ${item.admission_no}`})),"id","label",state.historyStudentId,filtered.length?"Select student":"No accessible students")}</select></label></div></section>
+      ${data.error?`<section class="panel pad">${emptyState("Academic history unavailable",data.error)}</section>`:student.id?`
+      <div class="grid two maturity-grid" style="margin-top:18px">
+        <section class="panel pad transcript-profile"><div class="section-title"><h4>${esc(student.full_name)}</h4><span class="status ${student.status==="active"?"published":"draft"}">${esc(statusText(student.status))}</span></div><div class="metric-row wrap">${maturityMetric("Admission number",student.admission_no)}${maturityMetric("Academic periods",number(records.length))}${maturityMetric("Transcript issuances",number(issuances.length))}</div><div class="button-row" style="margin-top:15px"><button class="button outline" id="transcriptPrint">Print cumulative record</button><button class="button ghost" id="transcriptCsv">Export CSV</button></div></section>
+        <section class="panel pad"><div class="section-title"><h4>Lifecycle</h4></div>${lifecycle.length?`<div class="timeline">${lifecycle.map(item=>`<div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>${esc(statusText(item.event_type))}</strong><small>${isoDate(item.effective_date)} • ${esc(item.from_class_name||"—")} ${item.to_class_name?`→ ${esc(item.to_class_name)}`:""}${item.destination_school?` • ${esc(item.destination_school)}`:""}<br>${esc(item.reason)}</small></div></div>`).join("")}</div>`:`<p class="help-text">No transfer, withdrawal, graduation, or reactivation event recorded.</p>`}</section>
+      </div>
+      <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Cumulative academic record</h3><p>Approved, published, and historically withdrawn report versions</p></div></div>${records.length?records.map(record=>academicRecordHtml(record)).join(""):emptyState("No cumulative academic record")}</section>
+      <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Transcript issuances</h3><p>Only the latest valid issuance verifies as current.</p></div></div>${issuances.length?`<div class="table-wrap"><table><thead><tr><th>Issued</th><th>Purpose</th><th>Status</th><th>Verification</th><th>Action</th></tr></thead><tbody>${issuances.map(item=>`<tr><td>${isoDateTime(item.issued_at)}</td><td>${esc(item.purpose)}</td><td>${statusBadge(item.status)}</td><td><code>${esc(item.verification_token)}</code></td><td><div class="button-row compact"><button class="button ghost small" data-transcript-copy="${attr(item.verification_token)}">Copy link</button>${["system_admin","principal"].includes(role())&&item.status==="valid"?`<button class="button warning small" data-transcript-revoke="${attr(item.id)}">Revoke</button>`:""}</div></td></tr>`).join("")}</tbody></table></div>`:emptyState("No official transcript has been issued")}</section>`:`<section class="panel pad" style="margin-top:18px">${emptyState("Select a student")}</section>`}`;
+    byId("historyStudent").onchange=async()=>{state.historyStudentId=byId("historyStudent").value;state.historyData=null;await renderAcademicHistory(token,true)};
+    byId("historySearch").oninput=()=>{const q=byId("historySearch").value.toLowerCase();$$('#historyStudent option').forEach(option=>{if(!option.value)return;option.hidden=!option.textContent.toLowerCase().includes(q)})};
+    byId("transcriptIssue")?.addEventListener("click",issueTranscript);
+    byId("lifecycleAdd")?.addEventListener("click",recordLifecycleEvent);
+    byId("transcriptPrint")?.addEventListener("click",()=>printTranscript(transcript));
+    byId("transcriptCsv")?.addEventListener("click",()=>exportTranscriptCsv(transcript));
+    $$('[data-transcript-copy]').forEach(button=>button.onclick=()=>copyTranscriptLink(button.dataset.transcriptCopy));
+    $$('[data-transcript-revoke]').forEach(button=>button.onclick=()=>revokeTranscript(button.dataset.transcriptRevoke));
+  }
+  function academicRecordHtml(record){const attendance=Number(record.days_school_opened||0)?Math.round(Number(record.days_present||0)/Number(record.days_school_opened)*100):0;return `<article class="academic-period-card"><header><div><strong>${esc(record.academic_year_name)} • ${esc(record.term_name)}</strong><span>${esc(record.class_name)} • ${esc(record.report_number||"Report")}</span></div><div><b>${number(record.average,1)}%</b><small>${number(record.days_present)} / ${number(record.days_school_opened)} days (${attendance}%)</small></div></header><div class="table-wrap"><table><thead><tr><th>Subject</th><th>Score</th><th>Grade</th><th>Remark</th></tr></thead><tbody>${(record.subjects||[]).map(subject=>`<tr><td>${esc(subject.subject_name)}</td><td>${number(subject.total_score,1)}</td><td>${esc(subject.grade||"—")}</td><td>${esc(subject.remark||"")}</td></tr>`).join("")}</tbody></table></div></article>`}
+  async function issueTranscript(){modal("Issue official transcript","A new issuance supersedes any currently valid transcript for this student.",`<label class="field"><span>Purpose</span><input id="transcriptPurpose" value="Academic transcript"></label>`,`<button class="button ghost" id="transcriptCancel">Cancel</button><button class="button primary" id="transcriptConfirm">Issue transcript</button>`,"small");byId("transcriptCancel").onclick=closeModal;byId("transcriptConfirm").onclick=async()=>{const button=byId("transcriptConfirm");button.disabled=true;try{const result=await rpc("issue_student_transcript",{target_student_id:state.historyStudentId,purpose_text:byId("transcriptPurpose").value.trim()});closeModal();toast("Transcript issued",`Verification token: ${result.verification_token}`);state.historyData=null;await renderAcademicHistory(state.viewToken,true)}catch(error){toast("Transcript not issued",friendlyError(error),"error")}finally{button.disabled=false}}}
+  async function revokeTranscript(id){const reason=window.prompt("Enter the reason for revoking this transcript:","")||"";if(reason.trim().length<5)return;try{await rpc("revoke_student_transcript",{target_issuance_id:id,reason_text:reason.trim()});toast("Transcript revoked");state.historyData=null;await renderAcademicHistory(state.viewToken,true)}catch(error){toast("Transcript not revoked",friendlyError(error),"error")}}
+  function copyTranscriptLink(token){const base=(state.boot.school?.verification_base_url||location.href.split("?")[0]).replace(/\?+$/,'');const url=`${base}?transcript=${encodeURIComponent(token)}`;navigator.clipboard?.writeText(url).then(()=>toast("Verification link copied")).catch(()=>window.prompt("Copy verification link:",url))}
+  function printTranscript(snapshot){const win=window.open("","_blank","noopener,noreferrer");if(!win){toast("Print window blocked","Allow pop-ups to print the transcript.","warning");return}const student=snapshot.student||{},school=snapshot.school||{};win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(student.full_name)} Transcript</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#13213c}h1,h2{text-align:center}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{border:1px solid #aab4c5;padding:7px;text-align:left}.period{page-break-inside:avoid;margin-top:22px}small{color:#516078}</style></head><body><h1>${esc(school.school_name||schoolDisplayName())}</h1><h2>Cumulative Academic Transcript</h2><p><strong>Student:</strong> ${esc(student.full_name)}<br><strong>Admission No.:</strong> ${esc(student.admission_no)}<br><strong>Status:</strong> ${esc(statusText(student.status))}</p>${(snapshot.academic_records||[]).map(record=>`<section class="period"><h3>${esc(record.academic_year_name)} • ${esc(record.term_name)} • ${esc(record.class_name)}</h3><table><thead><tr><th>Subject</th><th>Score</th><th>Grade</th><th>Remark</th></tr></thead><tbody>${(record.subjects||[]).map(subject=>`<tr><td>${esc(subject.subject_name)}</td><td>${number(subject.total_score,1)}</td><td>${esc(subject.grade||"—")}</td><td>${esc(subject.remark||"")}</td></tr>`).join("")}</tbody></table><small>Attendance: ${number(record.days_present)} of ${number(record.days_school_opened)} days • Average: ${number(record.average,1)}%</small></section>`).join("")}</body></html>`);win.document.close();setTimeout(()=>win.print(),250)}
+  function exportTranscriptCsv(snapshot){const student=snapshot.student||{},headers=["academic_year","term","class","subject","score","grade","remark","days_present","days_opened","report_number"];const rows=[];(snapshot.academic_records||[]).forEach(record=>(record.subjects||[]).forEach(subject=>rows.push([record.academic_year_name,record.term_name,record.class_name,subject.subject_name,subject.total_score,subject.grade,subject.remark,record.days_present,record.days_school_opened,record.report_number])));downloadText(`${slugify(student.full_name||"student")}-transcript.csv`,[headers.join(","),...rows.map(row=>row.map(csvCell).join(","))].join("\n"),"text/csv")}
+  function recordLifecycleEvent(){const classes=state.boot.classes||[];modal("Record student lifecycle event","Transfer, withdrawal, graduation, inactivity, or reactivation is preserved as immutable history.",`<form id="lifecycleForm" class="form-grid"><label class="field"><span>Event</span><select name="event_type">${["transfer_in","transfer_out","withdrawn","graduated","inactive","reactivated","archived"].map(value=>`<option value="${value}">${esc(statusText(value))}</option>`).join("")}</select></label><label class="field"><span>Effective date</span><input type="date" name="effective_date" value="${localDateValue()}"></label><label class="field"><span>Destination or new class</span><select name="to_class_id">${optionList(classes,"id","name","","Not applicable")}</select></label><label class="field"><span>Destination school</span><input name="destination_school"></label><label class="field full"><span>Reference</span><input name="reference"></label><label class="field full"><span>Reason</span><textarea name="reason" required></textarea></label></form>`,`<button class="button ghost" id="lifecycleCancel">Cancel</button><button class="button primary" id="lifecycleSave">Save event</button>`,"small");byId("lifecycleCancel").onclick=closeModal;byId("lifecycleSave").onclick=async()=>{const form=byId("lifecycleForm"),values=formObject(form);if(values.reason.trim().length<5){toast("Reason required","Provide at least five characters.","error");return}const button=byId("lifecycleSave");button.disabled=true;try{await rpc("record_student_lifecycle_event",{payload:{student_id:state.historyStudentId,...values}});closeModal();toast("Lifecycle event recorded");state.historyData=null;state.workspace=null;await renderAcademicHistory(state.viewToken,true)}catch(error){toast("Lifecycle event not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
+
+  async function renderInsights(token,force=false) {
+    const termId=state.analyticsData?.term_id||activeTerm()?.id||(state.boot.terms||[])[0]?.id||"",visibleClasses=await visibleClassesForCurrentRole(),classId=state.analyticsData?.class_id||"";
+    const data=await rpc("academic_analytics",{target_term_id:termId,target_class_id:classId||null});if(token!==state.viewToken)return;state.analyticsData={...data,term_id:termId,class_id:classId};const summary=data.summary||{};
+    byId("content").innerHTML=`<div class="page-head"><div><h3>Academic Insights</h3><p>Privacy-aware class, subject, attendance, and report-completion trends</p></div><div class="page-actions"><button class="button secondary" id="insightsExport">Export summary</button></div></div>
+      <section class="panel pad"><div class="form-grid"><label class="field"><span>Term</span><select id="insightsTerm">${optionList(state.boot.terms||[],"id","name",termId)}</select></label><label class="field"><span>Class</span><select id="insightsClass">${optionList(visibleClasses,"id","name",classId,"All authorised classes")}</select></label></div></section>
+      <div class="stat-grid maturity-stat-grid" style="margin-top:18px">${statCard("blue","◉","Students",summary.students)}${statCard("purple","▤","Reports",summary.reports)}${statCard("gold","%","Average",`${number(summary.average,1)}%`)}${statCard("green","✓","Attendance",`${number(summary.attendance_rate,1)}%`)}</div>
+      <div class="grid two maturity-grid"><section class="panel pad"><div class="section-title"><h4>Subject performance</h4></div>${(data.subjects||[]).length?`<div class="bar-list analytics-bars">${data.subjects.map(item=>`<div class="bar-item"><label><strong>${esc(item.subject_name)}</strong><small>${number(item.scored)} records • ${number(item.lowest,1)}–${number(item.highest,1)}</small></label><div class="bar-track"><span style="width:${percentValue(item.average)}%"></span></div><b>${number(item.average,1)}%</b></div>`).join("")}</div>`:emptyState("No subject results")}</section><section class="panel pad"><div class="section-title"><h4>Class overview</h4></div>${(data.classes||[]).length?`<div class="table-wrap"><table><thead><tr><th>Class</th><th>Students</th><th>Average</th><th>Attendance</th><th>Published</th></tr></thead><tbody>${data.classes.map(item=>`<tr><td>${esc(item.class_name)}</td><td>${number(item.students)}</td><td>${number(item.average,1)}%</td><td>${number(item.attendance_rate,1)}%</td><td>${number(item.published)}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No class analytics")}</section></div>`;
+    byId("insightsTerm").onchange=()=>{state.analyticsData={term_id:byId("insightsTerm").value,class_id:byId("insightsClass").value};renderInsights(token,true)};
+    byId("insightsClass").onchange=()=>{state.analyticsData={term_id:byId("insightsTerm").value,class_id:byId("insightsClass").value};renderInsights(token,true)};
+    byId("insightsExport").onclick=()=>{const headers=["class","students","average","attendance_rate","published"];downloadText("academic-insights.csv",[headers.join(","),...(data.classes||[]).map(item=>[item.class_name,item.students,item.average,item.attendance_rate,item.published].map(csvCell).join(","))].join("\n"),"text/csv")};
+  }
+
+  async function renderCompliance(token,force=false) {
+    const data=await rpc("get_compliance_console");if(token!==state.viewToken)return;state.complianceConsole=data;
+    byId("content").innerHTML=`<div class="page-head"><div><h3>Privacy and Security</h3><p>Data retention, rights requests, security incidents, and formal verification</p></div><div class="page-actions">${role()==="system_admin"?`<button class="button secondary" id="retentionAdd">Add retention policy</button><button class="button primary" id="verificationAdd">Record security review</button>`:""}<button class="button outline" id="privacyAdd">New privacy request</button></div></div>
+      <div class="stat-grid maturity-stat-grid">${statCard("blue","◈","Open privacy requests",data.open_privacy_requests)}${statCard("gold","⌛","Overdue requests",data.overdue_privacy_requests)}${statCard("red","!","High security events",data.open_high_security_events)}${statCard("green","✓","Verification runs",(data.verification_runs||[]).length)}</div>
+      <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Data retention policies</h3><p>Review periods and disposition actions; no automatic deletion is performed without governance approval.</p></div></div>${(data.retention_policies||[]).length?`<div class="table-wrap"><table><thead><tr><th>Category</th><th>Retention</th><th>Legal basis</th><th>Disposition</th><th>Status</th><th></th></tr></thead><tbody>${data.retention_policies.map(item=>`<tr><td>${esc(item.data_category)}</td><td>${item.retention_years?`${number(item.retention_years)} years`:"Indefinite review"}</td><td>${esc(item.legal_basis)}</td><td>${esc(statusText(item.disposition_action))}</td><td>${item.active?"Active":"Inactive"}</td><td>${role()==="system_admin"?`<button class="button ghost small" data-retention-edit="${attr(item.id)}">Edit</button>`:""}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No retention policies")}</section>
+      <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Privacy requests</h3><p>Access, correction, export, restriction, anonymisation, deletion, and consent review</p></div></div>${(data.privacy_requests||[]).length?`<div class="table-wrap"><table><thead><tr><th>Requester</th><th>Type</th><th>Student</th><th>Due</th><th>Status</th><th>Action</th></tr></thead><tbody>${data.privacy_requests.map(item=>`<tr><td><div class="cell-copy"><strong>${esc(item.requester_name)}</strong><small>${esc(item.requester_contact)}</small></div></td><td>${esc(statusText(item.request_type))}</td><td>${esc(item.student_name||"General request")}</td><td>${isoDateTime(item.due_at)}</td><td>${statusBadge(item.status)}</td><td><button class="button ghost small" data-privacy-update="${attr(item.id)}">Update</button></td></tr>`).join("")}</tbody></table></div>`:emptyState("No privacy requests")}</section>
+      <div class="grid two maturity-grid" style="margin-top:18px"><section class="panel"><div class="panel-header"><div><h3>Security events</h3><p>Application and access-control events from the last 180 days</p></div></div>${(data.security_events||[]).length?`<div class="compact-scroll"><table><thead><tr><th>Event</th><th>Severity</th><th>Status</th><th></th></tr></thead><tbody>${data.security_events.map(item=>`<tr><td><div class="cell-copy"><strong>${esc(item.message)}</strong><small>${isoDateTime(item.created_at)} • ${esc(item.source)}</small></div></td><td><span class="severity ${attr(item.severity)}">${esc(item.severity)}</span></td><td>${statusBadge(item.status)}</td><td>${item.status==="open"?`<button class="button ghost small" data-security-resolve="${attr(item.id)}">Review</button>`:""}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No security events")}</section><section class="panel"><div class="panel-header"><div><h3>Security verification history</h3><p>OWASP ASVS or equivalent review evidence</p></div></div>${(data.verification_runs||[]).length?`<div class="compact-scroll"><table><thead><tr><th>Standard</th><th>Scope</th><th>Status</th><th>Next review</th></tr></thead><tbody>${data.verification_runs.map(item=>`<tr><td>${esc(item.standard_name)}</td><td>${esc(item.scope)}</td><td>${statusBadge(item.status)}</td><td>${isoDateTime(item.next_review_at)}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No formal security verification recorded")}</section></div>`;
+    byId("retentionAdd")?.addEventListener("click",()=>editRetentionPolicy(null));$$('[data-retention-edit]').forEach(button=>button.onclick=()=>editRetentionPolicy((data.retention_policies||[]).find(item=>item.id===button.dataset.retentionEdit)));
+    byId("privacyAdd").onclick=createPrivacyRequest;$$('[data-privacy-update]').forEach(button=>button.onclick=()=>updatePrivacyRequest((data.privacy_requests||[]).find(item=>item.id===button.dataset.privacyUpdate)));
+    byId("verificationAdd")?.addEventListener("click",recordSecurityVerification);$$('[data-security-resolve]').forEach(button=>button.onclick=()=>resolveSecurityEvent(button.dataset.securityResolve));
+  }
+  function editRetentionPolicy(row={}){row=row||{};modal(row.id?"Edit retention policy":"Add retention policy","Disposition remains subject to authorised review.",`<form id="retentionForm" class="form-grid"><label class="field full"><span>Data category</span><input name="data_category" value="${attr(row.data_category||"")}" required></label><label class="field"><span>Retention years</span><input name="retention_years" type="number" min="1" max="100" value="${attr(row.retention_years||"")}"></label><label class="field"><span>Disposition</span><select name="disposition_action">${["review","archive","anonymise","delete"].map(value=>`<option value="${value}" ${row.disposition_action===value?"selected":""}>${esc(statusText(value))}</option>`).join("")}</select></label><label class="field full"><span>Legal basis</span><textarea name="legal_basis">${esc(row.legal_basis||"")}</textarea></label><label class="field full"><span>Notes</span><textarea name="notes">${esc(row.notes||"")}</textarea></label><label><input type="checkbox" name="active" ${row.active!==false?"checked":""}> Active policy</label></form>`,`<button class="button ghost" id="retentionCancel">Cancel</button><button class="button primary" id="retentionSave">Save</button>`,"small");byId("retentionCancel").onclick=closeModal;byId("retentionSave").onclick=async()=>{const form=byId("retentionForm"),values=formObject(form),button=byId("retentionSave");button.disabled=true;try{await rpc("save_retention_policy",{payload:{...values,active:form.elements.active.checked}});closeModal();toast("Retention policy saved");await renderCompliance(state.viewToken,true)}catch(error){toast("Policy not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
+  async function createPrivacyRequest(){let students=[];try{students=(await rpc("search_students_v5",{search_text:"",target_class_id:null,target_status:null,archive_filter:"all",page_number:1,page_size:100})).rows||[]}catch(_){}modal("Create privacy request","Record the request and its response deadline.",`<form id="privacyForm" class="form-grid"><label class="field"><span>Request type</span><select name="request_type">${["access","correction","export","restriction","anonymisation","deletion","consent_review"].map(value=>`<option value="${value}">${esc(statusText(value))}</option>`).join("")}</select></label><label class="field"><span>Student</span><select name="student_id">${optionList(students.map(item=>({...item,label:`${item.full_name||fullName(item)} • ${item.admission_no}`})),"id","label","","General request")}</select></label><label class="field"><span>Requester name</span><input name="requester_name" required></label><label class="field"><span>Contact</span><input name="requester_contact"></label><label class="field"><span>Due date</span><input type="datetime-local" name="due_at" value="${dateTimeLocalValue(new Date(Date.now()+30*86400000))}"></label><label class="field full"><span>Request details</span><textarea name="request_details" required></textarea></label></form>`,`<button class="button ghost" id="privacyCancel">Cancel</button><button class="button primary" id="privacySave">Save request</button>`,"small");byId("privacyCancel").onclick=closeModal;byId("privacySave").onclick=async()=>{const values=formObject(byId("privacyForm"));if(values.request_details.trim().length<10){toast("Details required","Provide at least ten characters.","error");return}const button=byId("privacySave");button.disabled=true;try{await rpc("create_privacy_request",{payload:values});closeModal();toast("Privacy request recorded");await renderCompliance(state.viewToken,true)}catch(error){toast("Request not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
+  function updatePrivacyRequest(row){modal("Update privacy request",row.requester_name,`<label class="field"><span>Status</span><select id="privacyStatus">${["open","in_review","approved","rejected","completed","cancelled"].map(value=>`<option value="${value}" ${row.status===value?"selected":""}>${esc(statusText(value))}</option>`).join("")}</select></label><label class="field"><span>Outcome or case note</span><textarea id="privacyOutcome">${esc(row.outcome||"")}</textarea></label>`,`<button class="button ghost" id="privacyUpdateCancel">Cancel</button><button class="button primary" id="privacyUpdateSave">Save</button>`,"small");byId("privacyUpdateCancel").onclick=closeModal;byId("privacyUpdateSave").onclick=async()=>{const button=byId("privacyUpdateSave");button.disabled=true;try{await rpc("update_privacy_request",{target_request_id:row.id,target_status:byId("privacyStatus").value,outcome_text:byId("privacyOutcome").value.trim()});closeModal();toast("Privacy request updated");await renderCompliance(state.viewToken,true)}catch(error){toast("Request not updated",friendlyError(error),"error")}finally{button.disabled=false}}}
+  function recordSecurityVerification(){modal("Record security verification","Document an OWASP ASVS or equivalent review.",`<form id="securityVerificationForm" class="form-grid"><label class="field"><span>Standard</span><input name="standard_name" value="OWASP ASVS 5.0"></label><label class="field"><span>Status</span><select name="status">${["planned","in_progress","passed","passed_with_findings","failed"].map(value=>`<option value="${value}">${esc(statusText(value))}</option>`).join("")}</select></label><label class="field full"><span>Scope</span><input name="scope" required placeholder="Authentication, RLS, Storage, Edge Functions, file uploads"></label><label class="field full"><span>Summary</span><textarea name="summary"></textarea></label><label class="field"><span>Next review</span><input type="datetime-local" name="next_review_at"></label></form>`,`<button class="button ghost" id="verificationCancel">Cancel</button><button class="button primary" id="verificationSave">Save review</button>`,"small");byId("verificationCancel").onclick=closeModal;byId("verificationSave").onclick=async()=>{const values=formObject(byId("securityVerificationForm")),button=byId("verificationSave");button.disabled=true;try{await rpc("save_security_verification",{payload:{...values,findings:[]}});closeModal();toast("Security verification recorded");await renderCompliance(state.viewToken,true)}catch(error){toast("Verification not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
+  function resolveSecurityEvent(id){modal("Review security event","Record the investigation outcome.",`<label class="field"><span>Status</span><select id="securityEventStatus"><option value="acknowledged">Acknowledged</option><option value="resolved">Resolved</option><option value="false_positive">False positive</option></select></label><label class="field"><span>Resolution note</span><textarea id="securityResolution"></textarea></label>`,`<button class="button ghost" id="securityCancel">Cancel</button><button class="button primary" id="securitySave">Save</button>`,"small");byId("securityCancel").onclick=closeModal;byId("securitySave").onclick=async()=>{const button=byId("securitySave");button.disabled=true;try{await rpc("resolve_security_event",{target_event_id:Number(id),target_status:byId("securityEventStatus").value,resolution_text:byId("securityResolution").value.trim()});closeModal();toast("Security event updated");await renderCompliance(state.viewToken,true)}catch(error){toast("Security event not updated",friendlyError(error),"error")}finally{button.disabled=false}}}
+
+
   const PACKAGE_LOGO_TYPES=new Set(["image/png"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
   const PACKAGE_TEMPLATE_MAX_BYTES=20*1024*1024;
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v6.9.2 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.0.1 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -4631,7 +4838,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v6_9_2.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_0_0.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -4711,7 +4918,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v6.9.2 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.0.1 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
@@ -4746,24 +4953,24 @@
     catch(error){toast("Package not revoked",friendlyError(error),"error",8000)}finally{button.disabled=false}
   }
 
-  async function showVerification(token) {
+  async function showVerification(token,isTranscript=false) {
     showOnly("verifyView");
-    const root=byId("verifyView");root.innerHTML=`<div class="verify-card"><div class="empty">Verifying report</div></div>`;
+    const root=byId("verifyView");root.innerHTML=`<div class="verify-card"><div class="empty">Verifying ${isTranscript?"transcript":"report"}</div></div>`;
     try{
       if(!isConfigured()||!window.supabase?.createClient)throw new Error("Verification service unavailable");
       if(!state.client)state.client=window.supabase.createClient(CONFIG.supabaseUrl,CONFIG.supabaseAnonKey,{auth:{persistSession:false}});
-      const data=await rpc("verify_report",{token});
-      root.innerHTML=`<section class="verify-card">
-        <div class="verify-head"><img src="${schoolDisplayLogo()}" alt=""><div><h1>${esc(schoolDisplayName())}</h1><p>Report Card Verification</p></div></div>
-        <div class="verify-state ${data.valid?"valid":"invalid"}">${data.valid?"Authentic published report":data.revoked?"Publication withdrawn":"Report not verified"}</div>
-        ${data.report_number?`<div class="verify-result">
-          ${verifyField("Report number",data.report_number)}${verifyField("Student",data.student_name)}
-          ${verifyField("Admission number",data.admission_no)}${verifyField("Class",data.class_name)}
-          ${verifyField("Academic year",data.academic_year)}${verifyField("Term",data.term_name)}
-          ${verifyField("Average",`${number(data.average,1)}%`)}${verifyField("Published",isoDateTime(data.published_at))}
-        </div>`:""}
-      </section>`;
-    }catch(error){root.innerHTML=`<section class="verify-card"><div class="verify-state invalid">Verification unavailable</div></section>`}
+      if(isTranscript){
+        const data=await rpc("verify_transcript",{token});
+        root.innerHTML=`<section class="verify-card"><div class="verify-head"><img src="${schoolDisplayLogo()}" alt=""><div><h1>${esc(data.school_name||schoolDisplayName())}</h1><p>Academic Transcript Verification</p></div></div><div class="verify-state ${data.valid?"valid":"invalid"}">${data.valid?"Authentic current transcript":data.status==="revoked"?"Transcript revoked":data.status==="superseded"?"Transcript superseded":"Transcript not verified"}</div>${data.student_name?`<div class="verify-result">${verifyField("Student",data.student_name)}${verifyField("Admission number",data.admission_no)}${verifyField("Purpose",data.purpose)}${verifyField("Academic records",number(data.record_count))}${verifyField("Issued",isoDateTime(data.issued_at))}${data.revocation_reason?verifyField("Revocation reason",data.revocation_reason):""}</div>`:""}</section>`;
+      }else{
+        const data=await rpc("verify_report",{token});
+        root.innerHTML=`<section class="verify-card">
+          <div class="verify-head"><img src="${schoolDisplayLogo()}" alt=""><div><h1>${esc(schoolDisplayName())}</h1><p>Report Card Verification</p></div></div>
+          <div class="verify-state ${data.valid?"valid":"invalid"}">${data.valid?"Authentic published report":data.revoked?"Publication withdrawn":"Report not verified"}</div>
+          ${data.report_number?`<div class="verify-result">${verifyField("Report number",data.report_number)}${verifyField("Student",data.student_name)}${verifyField("Admission number",data.admission_no)}${verifyField("Class",data.class_name)}${verifyField("Academic year",data.academic_year)}${verifyField("Term",data.term_name)}${verifyField("Average",`${number(data.average,1)}%`)}${verifyField("Published",isoDateTime(data.published_at))}</div>`:""}
+        </section>`;
+      }
+    }catch(error){root.innerHTML=`<section class="verify-card"><div class="verify-state invalid">Verification unavailable</div><p class="help-text">${esc(friendlyError(error))}</p></section>`}
   }
   function verifyField(label,value){return `<div class="verify-field"><span>${esc(label)}</span><strong>${esc(value??"—")}</strong></div>`}
 
