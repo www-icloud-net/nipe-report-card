@@ -1,7 +1,7 @@
 {
-  "name": "Nipe Report Card Enterprise v6.9.1 Reusable Schools Edition",
+  "name": "Nipe Report Card Enterprise v6.9.2 Reusable Schools Edition",
   "short_name": "Nipe Reports",
-  "description": "Academic reporting with platform licensing, compliance access controls, compact adaptive report layouts, bulk class PDF packages, reusable school package generation, and student records",
+  "description": "Academic reporting with controlled emergency teacher delegation, platform licensing, compliance access controls, protected reusable package generation, bulk class PDF packages, and student records",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",

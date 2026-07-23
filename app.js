@@ -50,6 +50,7 @@
     {id:"teachers",label:"Teachers",icon:"♜",subtitle:"Teacher records and assignments",permission:"manage_teachers"},
     {id:"headteachers",label:"Principals",icon:"★",subtitle:"Principal records and appointments",permission:"manage_headteachers"},
     {id:"academics",label:"Academics",icon:"⌘",subtitle:"Academic structure and assessment",permission:"manage_academics"},
+    {id:"delegations",label:"Emergency Delegation",icon:"⚑",subtitle:"Temporary academic access, continuity, and Principal oversight",roles:["system_admin","principal"]},
     {id:"reports",label:"Report Cards",icon:"▤",subtitle:"Assessment, approval, and publication",hideFor:["parent_guardian"]},
     {id:"children",label:"My Children",icon:"♥",subtitle:"Published academic records",roles:["parent_guardian"]},
     {id:"users",label:"Users and Access",icon:"♟",subtitle:"Roles, classes, and security",permission:"manage_users"},
@@ -61,8 +62,8 @@
 
   const ROLE_NAV_IDS = Object.freeze({
     platform_super_admin:["licensing","github"],
-    system_admin:["dashboard","students","teachers","headteachers","academics","reports","users","notifications","audit","settings"],
-    principal:["dashboard","reports","notifications"],
+    system_admin:["dashboard","students","teachers","headteachers","academics","delegations","reports","users","notifications","audit","settings"],
+    principal:["dashboard","delegations","reports","notifications"],
     class_teacher:["dashboard","my_class","attendance","my_subjects","students","reports","notifications"],
     subject_teacher:["dashboard","my_subjects","students","reports","notifications"],
     parent_guardian:["dashboard","children","notifications"]
@@ -80,7 +81,7 @@
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
     packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
     attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null,
-    licenseConsole:null, platformPackageConsole:null
+    licenseConsole:null, platformPackageConsole:null, delegationConsole:null, myEmergencyDelegations:[]
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -440,7 +441,7 @@
   async function logout() {
     disconnectRealtime();
     await state.client?.auth.signOut();
-    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;
+    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.delegationConsole=null;state.myEmergencyDelegations=[];
     state.templateUrls.clear();state.templateCanvases.clear();
     showOnly("authView");setLoading(false);
   }
@@ -592,7 +593,7 @@
     const token=state.viewToken;
     try {
       const renderer={
-        dashboard:renderDashboard,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,reports:renderReports,
+        dashboard:renderDashboard,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,delegations:renderEmergencyDelegations,reports:renderReports,
         children:renderChildren,users:renderUsers,notifications:renderNotifications,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
       }[view];
       await renderer?.(token,force);
@@ -633,7 +634,7 @@
   function handleRealtime(topic,payload) {
     state.lastSync=new Date();setSync("online","Live");
     const table=payload?.payload?.table||payload?.table||"";
-    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries"].includes(table))state.workspace=null;
+    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations"].includes(table))state.workspace=null;
     if(table==="report_card_templates"){state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear()}
     if(topic.startsWith("user:")||table==="notifications") loadNotificationCount();
     clearTimeout(handleRealtime.timer);
@@ -648,6 +649,7 @@
         if(state.reportEditor&&topic===`report:${state.reportEditor.report?.id}`) refreshOpenReport();
         else navigate(state.view,true);
       } else if(state.view==="academics"&&topic==="school:global") renderAcademics(state.viewToken,true);
+      else if(state.view==="delegations") renderEmergencyDelegations(state.viewToken,true);
       else if(state.view==="my_class") renderMyClass(state.viewToken,true);
       else if(state.view==="my_subjects") renderMySubjects(state.viewToken,true);
       else if(state.view==="notifications") renderNotifications(state.viewToken,true);
@@ -764,6 +766,7 @@
     if(can("manage_students"))actions.push(`<button class="button secondary" data-dashboard-view="students">Students</button>`);
     if(can("manage_teachers"))actions.push(`<button class="button secondary" data-dashboard-view="teachers">Teachers</button>`);
     if(can("manage_headteachers"))actions.push(`<button class="button secondary" data-dashboard-view="headteachers">Principals</button>`);
+    if(can("manage_emergency_delegations")||can("acknowledge_emergency_delegations"))actions.push(`<button class="button secondary" data-dashboard-view="delegations">Emergency Delegation</button>`);
     if(can("create_reports"))actions.push(`<button class="button primary" data-dashboard-view="reports">Report Cards</button>`);
     if(currentRole==="parent_guardian")actions.push(`<button class="button primary" data-dashboard-view="children">My Children</button>`);
     return actions.join("");
@@ -782,6 +785,29 @@
     if(!["class_teacher","subject_teacher"].includes(role()))return state.boot?.classes||[];
     const workspace=await loadRoleWorkspace();
     return assignedClassRowsFromWorkspace(workspace);
+  }
+  async function loadMyEmergencyDelegations(force=false) {
+    if(!["system_admin","class_teacher","subject_teacher"].includes(role()))return [];
+    if(force||!Array.isArray(state.myEmergencyDelegations)||!state.myEmergencyDelegations.length){
+      state.myEmergencyDelegations=await rpc("get_my_emergency_academic_delegations",{target_class_id:null,target_term_id:null});
+    }
+    return state.myEmergencyDelegations||[];
+  }
+  function emergencyDelegationScopeLabel(item={}) {
+    const subject=item.subject_name?` • ${item.subject_name}`:" • All assigned subjects";
+    const capabilities=[item.allow_score_entry?"score entry":"",item.allow_class_report_fields?"class report details":""].filter(Boolean).join(" and ");
+    return `${item.class_name||"Class"}${subject}${capabilities?` • ${capabilities}`:""}`;
+  }
+  function emergencyDelegationBannerHtml(items=[]) {
+    if(!items.length)return "";
+    const nearest=[...items].sort((a,b)=>new Date(a.valid_until)-new Date(b.valid_until))[0];
+    return `<section class="license-banner warning emergency-delegation-banner"><div><strong>Temporary academic access active</strong><span>${esc(emergencyDelegationScopeLabel(nearest))}. Reason: ${esc(nearest.reason||"Emergency continuity access")}</span></div><small>Expires ${esc(isoDateTime(nearest.valid_until))}${items.length>1?` • ${items.length} active delegations`:""}</small></section>`;
+  }
+  async function editableClassesForCurrentRole() {
+    const visible=await visibleClassesForCurrentRole();
+    if(role()!=="system_admin")return visible;
+    const delegations=await loadMyEmergencyDelegations(true),ids=new Set(delegations.map(item=>item.class_id));
+    return visible.filter(item=>ids.has(item.id));
   }
   function workspaceProgress(done,total) {
     const safeTotal=Number(total||0),safeDone=Number(done||0);
@@ -1896,7 +1922,7 @@
 
   async function renderReports(token) {
     state.reportEditor=null;
-    const visibleClasses=await visibleClassesForCurrentRole();
+    const [visibleClasses,emergencyDelegations]=await Promise.all([visibleClassesForCurrentRole(),loadMyEmergencyDelegations(true)]);
     if(token!==state.viewToken)return;
     if(state.reportClassFilter&&!visibleClasses.some(item=>item.id===state.reportClassFilter))state.reportClassFilter="";
     byId("content").innerHTML=`
@@ -1911,6 +1937,7 @@
           ${can("bulk_publish_reports")?`<button class="button success" id="reportBulkPublish">Publish class reports</button>`:""}
           ${can("create_reports")?`<button class="button primary" id="reportNew">New report</button>`:""}
         </div></div>
+      ${emergencyDelegationBannerHtml(emergencyDelegations)}
       <section class="panel">
         <div class="toolbar">
           <label class="search"><input id="reportSearch" type="search" placeholder="Search student or report number"></label>
@@ -2033,7 +2060,8 @@
   }
 
   async function openNewReportPicker() {
-    const visibleClasses=await visibleClassesForCurrentRole();
+    const visibleClasses=await editableClassesForCurrentRole();
+    if(!visibleClasses.length){toast(role()==="system_admin"?"No active emergency assignment":"No assigned class",role()==="system_admin"?"Create or activate a temporary delegation before opening a report.":"No class is currently available for report entry.","warning",7000);return}
     modal("New Report Card","Select a student enrolment and term",`
       <div class="form-grid">
         <label class="field"><span>Class</span><select id="newReportClass">${optionList(visibleClasses,"id","name")}</select></label>
@@ -2160,6 +2188,7 @@
           ${publication?`<button class="button outline" id="reportDownload">Download latest PDF</button>`:""}
           ${report.id&&canRemoveReportRow(report)?`<button class="button danger" id="reportRemove">Delete permanently</button>`:""}
         </div></div>
+      ${emergencyDelegationBannerHtml(editor.emergency_delegations||[])}
       <div class="report-layout">
         <section class="panel">
           <div class="panel-header"><div><h3>Assessment Record</h3><p>${statusBadge(report.status)}</p></div>
@@ -2420,7 +2449,8 @@
     </tbody></table></div>`;
   }
   async function openScoreImport() {
-    const visibleClasses=await visibleClassesForCurrentRole();
+    const visibleClasses=await editableClassesForCurrentRole();
+    if(!visibleClasses.length){toast("No score-entry assignment","No active class or emergency delegation is available for score import.","warning",7000);return}
     modal("Import Scores","CSV assessment score entries",`<form id="scoreImportForm" class="form-stack">
       <div class="form-grid"><label class="field"><span>Term</span><select name="term_id" required>${optionList(state.boot.terms||[],"id","name",activeTerm()?.id)}</select></label>
       <label class="field"><span>Class</span><select name="class_id" required>${optionList(visibleClasses,"id","name")}</select></label></div>
@@ -4137,6 +4167,94 @@
   function platformEventSummary(event) {
     return ({license_initialized:"Licence initialized",license_updated:"Licence updated",access_lock_applied:"Access lock applied",access_lock_released:"Access lock released",platform_admin_provisioned:"Platform administrator provisioned"})[event.event_type]||String(event.event_type||"Event").replaceAll("_"," ");
   }
+  function delegationComputedStatus(row={}) {
+    return row.computed_status||row.status||"unknown";
+  }
+  function delegationStatusHtml(row={}) {
+    const value=delegationComputedStatus(row),klass=value==="active"?"published":value==="scheduled"?"submitted":value==="expired"?"returned":"withdrawn";
+    return `<span class="status ${klass}">${esc(value.replaceAll("_"," "))}</span>`;
+  }
+  function delegationTypeLabel(value="") {
+    return value==="system_admin_override"?"System Administrator emergency entry":"Replacement teacher";
+  }
+  function delegationCapabilities(row={}) {
+    return [row.allow_score_entry?"Scores":"",row.allow_class_report_fields?"Class report details":""].filter(Boolean).join(" + ")||"None";
+  }
+  function delegationUserOptions(users=[],type="replacement_teacher",selected="") {
+    const allowed=users.filter(user=>type==="system_admin_override"?user.role==="system_admin":["class_teacher","subject_teacher"].includes(user.role));
+    return optionList(allowed,"id","full_name",selected,allowed.length?"Select delegate":"No eligible account");
+  }
+  function delegationSubjectOptions(data,classId,selected="") {
+    const subjects=(data.class_subjects||[]).filter(item=>item.class_id===classId);
+    return `<option value="">All assigned subjects</option>${subjects.map(item=>`<option value="${attr(item.subject_id)}" ${selected===item.subject_id?"selected":""}>${esc(item.subject_name)}${item.assigned_teacher_name?` • ${esc(item.assigned_teacher_name)}`:""}</option>`).join("")}`;
+  }
+  async function renderEmergencyDelegations(token,force=false) {
+    if(!["system_admin","principal"].includes(role()))throw new Error("Emergency delegation is available only to the System Administrator and Principal");
+    if(force||!state.delegationConsole)state.delegationConsole=await rpc("get_emergency_delegation_console");
+    if(token!==state.viewToken)return;
+    const data=state.delegationConsole||{},rows=data.delegations||[],events=data.events||[],isAdmin=can("manage_emergency_delegations"),isPrincipal=can("acknowledge_emergency_delegations");
+    const currentYear=activeYear()?.id||state.boot.academic_years?.[0]?.id||"",currentTerm=activeTerm()?.id||state.boot.terms?.[0]?.id||"";
+    const now=new Date(),later=new Date(now.getTime()+7*24*60*60*1000);
+    byId("content").innerHTML=`
+      <div class="page-head"><div><h3>Emergency Academic Delegation</h3><p>Temporary, term-scoped report entry with Principal oversight and immutable audit history.</p></div><button class="button ghost" id="delegationRefresh">Refresh</button></div>
+      <section class="license-banner warning"><div><strong>Continuity control</strong><span>Emergency access does not transfer submission, approval, or publication authority. The assigned class teacher still submits, and the Principal still approves.</span></div></section>
+      ${isAdmin?`<section class="panel pad"><div class="panel-header"><div><h3>Create Temporary Delegation</h3><p>Use a replacement teacher first. Select System Administrator emergency entry only when no suitable teacher is available.</p></div></div>
+        <form id="delegationForm" class="form-stack">
+          <div class="form-grid three">
+            <label class="field"><span>Delegation type</span><select name="delegation_type"><option value="replacement_teacher">Replacement teacher</option><option value="system_admin_override">System Administrator emergency entry</option></select></label>
+            <label class="field"><span>Delegate account</span><select name="delegate_user_id" required></select></label>
+            <label class="field"><span>Academic year</span><select name="academic_year_id" required>${optionList(state.boot.academic_years||[],"id","name",currentYear)}</select></label>
+            <label class="field"><span>Term</span><select name="term_id" required></select></label>
+            <label class="field"><span>Class</span><select name="class_id" required>${optionList(state.boot.classes||[],"id","name","","Select class")}</select></label>
+            <label class="field"><span>Subject scope</span><select name="subject_id"><option value="">Select a class first</option></select></label>
+            <label class="field"><span>Starts</span><input type="datetime-local" name="valid_from" value="${attr(dateTimeLocalValue(now.toISOString()))}" required></label>
+            <label class="field"><span>Expires</span><input type="datetime-local" name="valid_until" value="${attr(dateTimeLocalValue(later.toISOString()))}" required></label>
+            <div class="field delegation-capabilities"><span>Temporary capabilities</span><label class="check"><input type="checkbox" name="allow_score_entry" checked> Enter assessment scores</label><label class="check"><input type="checkbox" name="allow_class_report_fields"> Edit class report details</label></div>
+            <label class="field full"><span>Mandatory reason</span><textarea name="reason" minlength="10" required placeholder="State why the assigned teacher is unavailable and why temporary access is necessary."></textarea></label>
+          </div>
+          <div class="button-row"><button class="button primary" id="delegationCreate" type="button">Create temporary delegation</button></div>
+        </form></section>`:""}
+      <section class="panel"><div class="panel-header"><div><h3>Delegation Register</h3><p>${rows.length} recorded delegation${rows.length===1?"":"s"}</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Status</th><th>Delegate</th><th>Class and scope</th><th>Capabilities</th><th>Validity</th><th>Reason and oversight</th><th>Action</th></tr></thead><tbody>
+          ${rows.length?rows.map(row=>`<tr><td>${delegationStatusHtml(row)}<small class="table-subtext">${esc(delegationTypeLabel(row.delegation_type))}</small></td>
+            <td><strong>${esc(row.delegate_name||"Unknown")}</strong><small class="table-subtext">${esc(ROLE_LABELS[row.delegate_role]||row.delegate_role||"")}</small></td>
+            <td><strong>${esc(row.class_name||"")}</strong><small class="table-subtext">${esc(row.subject_name||"All assigned subjects")} • ${esc(row.term_name||"")}</small></td>
+            <td>${esc(delegationCapabilities(row))}<small class="table-subtext">Original: ${esc(row.original_teacher_name||"Unassigned")}</small></td>
+            <td>${esc(isoDateTime(row.valid_from))}<small class="table-subtext">to ${esc(isoDateTime(row.valid_until))}</small></td>
+            <td><span>${esc(row.reason||"")}</span><small class="table-subtext">${row.principal_acknowledged_at?`Acknowledged by ${esc(row.acknowledged_by_name||"Principal")} on ${esc(isoDateTime(row.principal_acknowledged_at))}`:"Principal acknowledgement pending"}</small></td>
+            <td><div class="table-actions">${isAdmin&&row.status==="active"&&delegationComputedStatus(row)!=="expired"?`<button class="button danger small" data-delegation-revoke="${attr(row.id)}">Revoke</button>`:""}${isPrincipal&&!row.principal_acknowledged_at?`<button class="button primary small" data-delegation-ack="${attr(row.id)}">Acknowledge</button>`:""}</div></td></tr>`).join(""):`<tr><td colspan="7"><div class="empty"><strong>No emergency delegations recorded</strong></div></td></tr>`}
+        </tbody></table></div></section>
+      <section class="panel"><div class="panel-header"><div><h3>Immutable Delegation Activity</h3><p>Creation, acknowledgement, revocation, and delegated report changes</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Actor</th><th>Reason</th><th>Report</th></tr></thead><tbody>
+          ${events.length?events.slice(0,100).map(event=>`<tr><td>${esc(isoDateTime(event.created_at))}</td><td>${esc(String(event.event_type||"").replaceAll("_"," "))}</td><td>${esc(event.actor_name||"System")}</td><td>${esc(event.event_reason||"—")}</td><td>${event.report_id?`<button class="button ghost small" data-delegation-report="${attr(event.report_id)}">Open report</button>`:"—"}</td></tr>`).join(""):`<tr><td colspan="5"><div class="empty">No delegation events</div></td></tr>`}
+        </tbody></table></div></section>`;
+    byId("delegationRefresh").onclick=()=>{state.delegationConsole=null;renderEmergencyDelegations(state.viewToken,true)};
+    $$('[data-delegation-report]').forEach(button=>button.onclick=()=>openReportEditor(button.dataset.delegationReport));
+    if(isAdmin){
+      const form=byId("delegationForm"),type=form.elements.delegation_type,delegate=form.elements.delegate_user_id,year=form.elements.academic_year_id,term=form.elements.term_id,classSelect=form.elements.class_id,subject=form.elements.subject_id,fields=form.elements.allow_class_report_fields;
+      const syncUsers=()=>{const selected=delegate.value;delegate.innerHTML=delegationUserOptions(data.eligible_users||[],type.value,selected);if(type.value==="system_admin_override"&&[...(delegate.options||[])].some(option=>option.value===state.boot.profile.id))delegate.value=state.boot.profile.id};
+      const syncTerms=()=>{const available=(state.boot.terms||[]).filter(item=>!year.value||item.academic_year_id===year.value),selected=term.value||currentTerm;term.innerHTML=optionList(available,"id","name",selected,"Select term")};
+      const syncSubjects=()=>{subject.innerHTML=delegationSubjectOptions(data,classSelect.value,subject.value);const specific=Boolean(subject.value);fields.disabled=specific;if(specific)fields.checked=false};
+      type.onchange=syncUsers;year.onchange=syncTerms;classSelect.onchange=syncSubjects;subject.onchange=syncSubjects;syncUsers();syncTerms();syncSubjects();
+      byId("delegationCreate").onclick=async()=>{
+        if(!form.reportValidity())return;
+        const values=formObject(form),button=byId("delegationCreate");button.disabled=true;
+        try{
+          state.delegationConsole=await rpc("create_emergency_academic_delegation",{payload:{...values,subject_id:values.subject_id||null,allow_score_entry:form.elements.allow_score_entry.checked,allow_class_report_fields:form.elements.allow_class_report_fields.checked,valid_from:new Date(values.valid_from).toISOString(),valid_until:new Date(values.valid_until).toISOString()}});
+          state.boot=await rpc("get_bootstrap_data");state.workspace=null;state.myEmergencyDelegations=[];renderBrand();renderNav();toast("Emergency delegation created","The Principal and delegate have been notified.");await renderEmergencyDelegations(state.viewToken);
+        }catch(error){toast("Delegation not created",friendlyError(error),"error",8000)}finally{button.disabled=false}
+      };
+      $$('[data-delegation-revoke]').forEach(button=>button.onclick=()=>{
+        modal("Revoke Emergency Delegation","Temporary report-entry access will stop immediately.",`<label class="field"><span>Revocation reason</span><textarea id="delegationRevokeReason" minlength="5" required></textarea></label>`,`<button class="button ghost" id="delegationRevokeCancel" type="button">Cancel</button><button class="button danger" id="delegationRevokeConfirm" type="button">Revoke access</button>`,"small");
+        byId("delegationRevokeCancel").onclick=closeModal;byId("delegationRevokeConfirm").onclick=async()=>{const reason=byId("delegationRevokeReason").value.trim();if(reason.length<5)return;const action=byId("delegationRevokeConfirm");action.disabled=true;try{state.delegationConsole=await rpc("revoke_emergency_academic_delegation",{target_delegation_id:button.dataset.delegationRevoke,reason_text:reason});state.boot=await rpc("get_bootstrap_data");state.workspace=null;state.myEmergencyDelegations=[];closeModal();renderBrand();renderNav();toast("Delegation revoked");await renderEmergencyDelegations(state.viewToken)}catch(error){toast("Delegation not revoked",friendlyError(error),"error")}finally{action.disabled=false}};
+      });
+    }
+    if(isPrincipal)$$('[data-delegation-ack]').forEach(button=>button.onclick=()=>{
+      modal("Acknowledge Emergency Delegation","Confirm that you have reviewed this temporary academic access.",`<label class="field"><span>Principal note</span><textarea id="delegationAckNote" placeholder="Optional oversight note"></textarea></label>`,`<button class="button ghost" id="delegationAckCancel" type="button">Cancel</button><button class="button primary" id="delegationAckConfirm" type="button">Acknowledge</button>`,"small");
+      byId("delegationAckCancel").onclick=closeModal;byId("delegationAckConfirm").onclick=async()=>{const action=byId("delegationAckConfirm");action.disabled=true;try{state.delegationConsole=await rpc("acknowledge_emergency_academic_delegation",{target_delegation_id:button.dataset.delegationAck,note_text:byId("delegationAckNote").value.trim()});closeModal();toast("Delegation acknowledged");await renderEmergencyDelegations(state.viewToken)}catch(error){toast("Acknowledgement not saved",friendlyError(error),"error")}finally{action.disabled=false}};
+    });
+  }
+
   async function renderLicensing(token,force=false) {
     if(!can("manage_licenses"))throw new Error("Platform Super Administrator access required");
     if(force||!state.licenseConsole)state.licenseConsole=await rpc("get_platform_license_console");
@@ -4440,7 +4558,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.9.1 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v6.9.2 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4471,7 +4589,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v6.9.1 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v6.9.2 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -4513,7 +4631,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v6_9_1.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v6_9_2.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -4593,7 +4711,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v6.9.1 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v6.9.2 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }

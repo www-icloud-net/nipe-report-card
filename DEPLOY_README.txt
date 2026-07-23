@@ -1,15 +1,18 @@
-REPORT CARD ENTERPRISE v6.9.1 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v6.9.2 REUSABLE SCHOOLS EDITION
+GITHUB PAGES DEPLOYMENT
 
-DEPLOYMENT SUMMARY
-1. Preserve the confirmed v6.9.0 package and create a verified backup.
-2. Run only the appended v6.9.1 continuation in 07_schema.sql.
-3. Confirm: 07 SCHEMA v6.9.1 PLATFORM PACKAGE CONTROL: PASS.
-4. Redeploy admin-user-management, scheduled-backup, and the new platform-package-manager Edge Function.
-5. Configure RCE_PACKAGE_SIGNING_SECRET with at least 32 random characters.
-6. Deploy the contents of this GITHUB_PAGES_FRONTEND directory while preserving production config.js values.
-7. Confirm that no package-source directory is published.
-8. Sign in as the Platform Super Administrator with MFA and upload PLATFORM_PACKAGE_TEMPLATE_v6_9_1.zip through GitHub Navigator.
-9. Confirm that school System Administrators cannot see or invoke GitHub Navigator.
-10. Complete all acceptance tests in UPGRADE_FROM_V6_9_0_TO_V6_9_1.txt.
+EXISTING v6.9.1 INSTALLATION
+1. Preserve the confirmed v6.9.1 package and create a verified encrypted backup.
+2. Run only the appended v6.9.2 continuation in 07_schema.sql.
+3. Confirm: 07 SCHEMA v6.9.2 EMERGENCY ACADEMIC DELEGATION: PASS.
+4. Redeploy scheduled-backup and platform-package-manager.
+5. Preserve the live Supabase URL and publishable key in config.js.
+6. Upload only the contents of this GITHUB_PAGES_FRONTEND directory.
+7. Hard-refresh or clear the previous application cache.
+8. Complete UPGRADE_FROM_V6_9_1_TO_V6_9_2.txt acceptance tests.
 
-Never publish Supabase Secret keys, service-role keys, RCE_PACKAGE_SIGNING_SECRET, backup encryption keys, cron secrets, or email-service credentials.
+FRESH INSTALLATION
+Follow COMPLETE_FRESH_SETUP_SUPABASE_TO_GITHUB.md and run all nine schema files in order, ending with 07_schema.sql.
+
+SECURITY
+Never publish service-role keys, Edge Function secrets, backup keys, RCE_PACKAGE_SIGNING_SECRET, PLATFORM_PACKAGE_TEMPLATE files, generated licensed packages, or any package-source directory.
