@@ -1327,7 +1327,7 @@
         </tbody></table></div></section>
       <section class="panel"><div class="panel-header"><div><h3>Terms</h3><p>${terms.length} configured</p></div><button class="button primary small" id="addTerm">Add term</button></div>
         <div class="table-wrap"><table><thead><tr><th>Term</th><th>Academic Year</th><th>Status</th><th></th></tr></thead><tbody>
-          ${terms.map(row=>`<tr><td><div class="cell-copy"><strong>${esc(row.name)}</strong><small>${isoDate(row.start_date)} – ${isoDate(row.end_date)}</small></div></td>
+          ${terms.map(row=>`<tr><td><div class="cell-copy"><strong>${esc(row.name)}</strong><small>${isoDate(row.start_date)} – ${isoDate(row.end_date)}</small>${row.next_term_begins?`<small>Next term reopens: ${isoDate(row.next_term_begins)}</small>`:`<small>Next-term reopening date not set</small>`}</div></td>
             <td>${esc(y.find(x=>x.id===row.academic_year_id)?.name||"")}</td>
             <td>${row.is_active?`<span class="status published">Active</span>`:`<span class="status draft">Inactive</span>`}</td>
             <td><div class="table-actions"><button class="button ghost small" data-edit-term="${row.id}">Edit</button>
@@ -1696,7 +1696,7 @@
       <label class="field"><span>Sequence</span><input type="number" min="1" max="6" name="sequence" value="${attr(row.sequence||1)}" required></label>
       <label class="field"><span>Start date</span><input type="date" name="start_date" value="${attr(row.start_date||"")}"></label>
       <label class="field"><span>End date</span><input type="date" name="end_date" value="${attr(row.end_date||"")}"></label>
-      <label class="field full"><span>Next term begins</span><input type="date" name="next_term_begins" value="${attr(row.next_term_begins||"")}"></label>
+      <label class="field full"><span>Next-term reopening date</span><input type="date" name="next_term_begins" value="${attr(row.next_term_begins||"")}"><small>This date is printed on every applicable report card. It must be after the current term end date.</small></label>
     </form>`,`<button class="button ghost" id="entityCancel" type="button">Cancel</button><button class="button primary" id="entitySave" type="button">Save</button>`,"small");
     byId("entityCancel").onclick=closeModal;byId("entitySave").onclick=()=>saveEntity("terms",id);
   }
@@ -1740,6 +1740,9 @@
   async function saveEntity(table,id) {
     const form=byId("entityForm"),values=formObject(form),button=byId("entitySave");if(!form?.reportValidity())return;button.disabled=true;let saved=false;
     try {
+      if(table==="terms"&&values.next_term_begins&&values.end_date&&values.next_term_begins<=values.end_date){
+        throw new Error("Next-term reopening date must be after the current term end date");
+      }
       const numeric=["sequence","level_order","display_order"];
       numeric.forEach(key=>{if(key in values)values[key]=Number(values[key]||0)});
       ["start_date","end_date","next_term_begins","class_teacher_id","class_teacher_record_id"].forEach(key=>{if(key in values&&!values[key])values[key]=null});
@@ -2252,6 +2255,7 @@
               <div class="form-grid three">
                 <label class="field"><span>Days school opened (automatic)</span><input name="days_school_opened" type="number" min="0" value="${attr(report.days_school_opened||0)}" readonly></label>
                 <label class="field"><span>Days present (automatic)</span><input name="days_present" type="number" min="0" value="${attr(report.days_present||0)}" readonly></label>
+                <label class="field"><span>Next-term reopening date</span><input type="date" value="${attr(reportNextTermReopeningDate(report,student))}" readonly><small>${reportNextTermReopeningDate(report,student)?"Printed on the official report card.":"The school has not set the date yet."}</small></label>
                 ${(()=>{const display=promotionDisplay(editor.promotion||localPromotionEvaluation(editor));return `<div class="field automatic-promotion-field" id="automaticPromotionField" data-promotion-state="${display.state}"><span>Automatic promotion</span><strong id="automaticPromotionValue">${esc(display.title)}</strong><small id="automaticPromotionDetail">${esc(display.detail)}</small></div>`})()}
                 <label class="field"><span>Attitude</span><input name="attitude" value="${attr(report.attitude||"")}" ${fieldsLocked?"disabled":""}></label>
                 <label class="field"><span>Conduct</span><input name="conduct" value="${attr(report.conduct||"")}" ${fieldsLocked?"disabled":""}></label>
@@ -3173,6 +3177,17 @@
     return date.toLocaleDateString("en-GB",{day:"2-digit",month:"2-digit",year:"numeric"});
   }
 
+  function reportNextTermReopeningDate(report={},student={}) {
+    const frozen=["submitted","class_reviewed","approved","published"].includes(String(report.status||""));
+    return String((frozen?report.next_term_reopening_date:null)||student.next_term_reopening_date||student.next_term_begins||report.next_term_reopening_date||"");
+  }
+
+  function reportNextTermReopeningText(report={},student={},manual=false) {
+    if(manual)return ".../.../....";
+    const value=reportNextTermReopeningDate(report,student);
+    return value?reportDate(value):"To be communicated";
+  }
+
   function reportYearDigits(value) {
     const digits=String(value||"").replace(/\D/g,"");
     return digits.length>=8?digits.slice(0,8):digits||"20252026";
@@ -3340,6 +3355,8 @@
     const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
     setReportFont(ctx,20,"bold");
     ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,shift(1422));
+    setReportFont(ctx,17,"bold");ctx.fillStyle=ink;
+    ctx.fillText(`Next Term Reopens: ${reportNextTermReopeningText(report,student,manual)}`,43,shift(1460));
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
@@ -3500,6 +3517,8 @@
     }
     const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
     setReportFont(ctx,20,"bold");ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,shift(1422));
+    setReportFont(ctx,17,"bold");ctx.fillStyle=ink;
+    ctx.fillText(`Next Term Reopens: ${reportNextTermReopeningText(report,student,manual)}`,43,shift(1460));
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
@@ -4608,7 +4627,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.0.1 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.0.2 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4634,7 +4653,7 @@
 
 
   // ---------------------------------------------------------------------------
-  // Report Card Enterprise v7.0.1 production maturity suite
+  // Report Card Enterprise v7.0.2 next-term reopening date
   // ---------------------------------------------------------------------------
   function selectedTermId(selectId="maturityTerm") {
     return byId(selectId)?.value||activeTerm()?.id||(state.boot?.terms||[])[0]?.id||"";
@@ -4796,7 +4815,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.0.1 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.0.2 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -4918,7 +4937,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.0.1 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.0.2 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }

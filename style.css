@@ -817,7 +817,7 @@ body[data-access-mode="read_only"] .nav-item::after{content:""}
 .delegation-capabilities .check{margin:0}
 .delegation-scope-note{padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--muted);font-size:12px;line-height:1.5}
 
-/* Report Card Enterprise v7.0.1: production maturity, accessibility, and mobile attendance */
+/* Report Card Enterprise v7.0.2: production maturity, accessibility, and mobile attendance */
 .skip-link{position:fixed;left:12px;top:-90px;z-index:10000;padding:11px 16px;border-radius:9px;background:#fff;color:#082d70;font-weight:800;box-shadow:0 8px 24px rgba(0,0,0,.2)}
 .skip-link:focus{top:12px}
 :focus-visible{outline:3px solid #f0b51d;outline-offset:3px}

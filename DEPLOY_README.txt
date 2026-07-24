@@ -1,15 +1,14 @@
-REPORT CARD ENTERPRISE v7.0.1 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v7.0.2 REUSABLE SCHOOLS EDITION
 GITHUB PAGES DEPLOYMENT
 
-Deploy the contents of this GITHUB_PAGES_FRONTEND directory only.
+1. Preserve the production config.js values.
+2. Apply the appended v7.0.2 section of 08_schema.sql in Supabase.
+3. Confirm: 08 SCHEMA v7.0.2 NEXT-TERM REOPENING DATE: PASS.
+4. Deploy only the contents of GITHUB_PAGES_FRONTEND to the configured GitHub Pages branch.
+5. Redeploy scheduled-backup and platform-package-manager.
+6. Keep RCE_PACKAGE_SIGNING_SECRET and all existing production secrets unchanged.
+7. Upload PLATFORM_PACKAGE_TEMPLATE_v7_0_2.zip through GitHub Navigator after Platform Super Administrator MFA.
+8. Hard-refresh the browser or clear the previous service-worker cache.
+9. Complete the acceptance tests in UPGRADE_FROM_V7_0_1_TO_V7_0_2.txt.
 
-Upgrade from the confirmed v6.9.2 baseline:
-1. Preserve v6.9.2 and create a verified encrypted backup.
-2. Run 08_schema.sql after the complete 07_schema.sql.
-3. Confirm: 08 SCHEMA v7.0.1 PRODUCTION MATURITY SUITE: PASS.
-4. Redeploy scheduled-backup and platform-package-manager.
-5. Preserve the existing production config.js values.
-6. Upload the protected PLATFORM_PACKAGE_TEMPLATE_v7_0_1.zip through GitHub Navigator.
-7. Hard-refresh the browser and complete the acceptance tests in UPGRADE_FROM_V6_9_2_TO_V7_0_1.txt.
-
-Never upload Supabase service-role keys, signing secrets, backup encryption keys, GitHub tokens, or database passwords to this public directory.
+Never publish service-role credentials, backup encryption keys, package signing secrets, or the private reusable package source.
