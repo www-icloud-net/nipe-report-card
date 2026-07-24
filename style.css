@@ -834,3 +834,10 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 /* Report Card Enterprise v7.1.0: certificates and awards */
 .list-card.selectable{display:flex;align-items:flex-start;gap:12px;cursor:pointer}.list-card.selectable>input{margin-top:4px;flex:0 0 auto}.list-card.selectable>div{display:grid;gap:3px;min-width:0}.list-card.selectable.disabled{cursor:not-allowed;opacity:.62;background:#f6f7f9}.certificate-template-form{display:grid;gap:13px;align-items:stretch}.certificate-template-form .field{min-width:0}.certificate-template-form textarea{resize:vertical}.verify-card code{word-break:break-word}.certificate-workflow-note{padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:var(--muted)}
 @media(max-width:760px){.certificate-template-form .form-grid{grid-template-columns:1fr}.list-card.selectable{padding:12px}.certificate-template-form{padding:13px}}
+
+
+/* Report Card Enterprise v7.1.1: certificate category template designs */
+.certificate-template-design{display:grid;gap:14px}
+.certificate-template-design .section-title{align-items:flex-start}
+.certificate-template-preview{display:flex;justify-content:center;align-items:center;max-height:72vh;overflow:auto;padding:12px;background:#eef3f9;border:1px solid var(--line);border-radius:14px}
+.certificate-template-preview img{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 12px 30px rgba(20,42,76,.18)}
