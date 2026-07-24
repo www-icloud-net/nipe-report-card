@@ -17,6 +17,7 @@
     backupBucket: "system-backups",
     signatureBucket: "headteacher-signatures",
     templateBucket: "report-card-templates",
+    certificatePdfBucket: "certificate-pdfs",
     pageSize: 20
   });
 
@@ -54,6 +55,7 @@
     {id:"academics",label:"Academics",icon:"⌘",subtitle:"Academic structure and assessment",permission:"manage_academics"},
     {id:"delegations",label:"Emergency Delegation",icon:"⚑",subtitle:"Temporary academic access, continuity, and Principal oversight",roles:["system_admin","principal"]},
     {id:"reports",label:"Report Cards",icon:"▤",subtitle:"Assessment, approval, and publication",hideFor:["parent_guardian"]},
+    {id:"certificates",label:"Certificates",icon:"✦",subtitle:"Promotion, completion, and teacher recognition awards",roles:["system_admin","principal"]},
     {id:"insights",label:"Insights",icon:"◩",subtitle:"Performance, attendance, completion, and class trends",roles:["system_admin","principal","class_teacher","subject_teacher"]},
     {id:"children",label:"My Children",icon:"♥",subtitle:"Published academic records",roles:["parent_guardian"]},
     {id:"users",label:"Users and Access",icon:"♟",subtitle:"Roles, classes, and security",permission:"manage_users"},
@@ -66,8 +68,8 @@
 
   const ROLE_NAV_IDS = Object.freeze({
     platform_super_admin:["licensing","github"],
-    system_admin:["dashboard","operations","students","history","teachers","headteachers","academics","delegations","reports","insights","users","notifications","compliance","audit","settings"],
-    principal:["dashboard","operations","history","delegations","reports","insights","notifications","compliance"],
+    system_admin:["dashboard","operations","students","history","teachers","headteachers","academics","delegations","reports","certificates","insights","users","notifications","compliance","audit","settings"],
+    principal:["dashboard","operations","history","delegations","reports","certificates","insights","notifications","compliance"],
     class_teacher:["dashboard","my_class","attendance","my_subjects","students","history","reports","insights","notifications"],
     subject_teacher:["dashboard","my_subjects","students","history","reports","insights","notifications"],
     parent_guardian:["dashboard","children","notifications"]
@@ -86,7 +88,8 @@
     packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
     attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null,
     licenseConsole:null, platformPackageConsole:null, delegationConsole:null, myEmergencyDelegations:[],
-    operationsConsole:null, historyStudentId:"", historyData:null, complianceConsole:null, analyticsData:null
+    operationsConsole:null, historyStudentId:"", historyData:null, complianceConsole:null, analyticsData:null,
+    certificateConsole:null, certificateConsoleYear:"", certificateConsoleType:"", certificateBatch:null, certificateBusy:false
   };
 
   const $ = (selector, root=document) => root.querySelector(selector);
@@ -415,8 +418,9 @@
     const params=new URLSearchParams(location.search);
     const verifyToken=params.get("verify");
     const transcriptToken=params.get("transcript");
-    if(verifyToken||transcriptToken) {
-      await showVerification(verifyToken||transcriptToken,Boolean(transcriptToken));
+    const certificateToken=params.get("certificate");
+    if(verifyToken||transcriptToken||certificateToken) {
+      await showVerification(verifyToken||transcriptToken||certificateToken,certificateToken?"certificate":transcriptToken?"transcript":"report");
       setLoading(false);
       return;
     }
@@ -456,7 +460,7 @@
   async function logout() {
     disconnectRealtime();
     await state.client?.auth.signOut();
-    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.delegationConsole=null;state.myEmergencyDelegations=[];state.operationsConsole=null;state.historyData=null;state.complianceConsole=null;state.analyticsData=null;
+    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.delegationConsole=null;state.myEmergencyDelegations=[];state.operationsConsole=null;state.historyData=null;state.complianceConsole=null;state.analyticsData=null;state.certificateConsole=null;state.certificateBatch=null;
     state.templateUrls.clear();state.templateCanvases.clear();
     showOnly("authView");setLoading(false);
   }
@@ -608,7 +612,7 @@
     const token=state.viewToken;
     try {
       const renderer={
-        dashboard:renderDashboard,operations:renderOperations,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,history:renderAcademicHistory,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,delegations:renderEmergencyDelegations,reports:renderReports,insights:renderInsights,
+        dashboard:renderDashboard,operations:renderOperations,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,history:renderAcademicHistory,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,delegations:renderEmergencyDelegations,reports:renderReports,certificates:renderCertificates,insights:renderInsights,
         children:renderChildren,users:renderUsers,notifications:renderNotifications,compliance:renderCompliance,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
       }[view];
       await renderer?.(token,force);
@@ -649,7 +653,7 @@
   function handleRealtime(topic,payload) {
     state.lastSync=new Date();setSync("online","Live");
     const table=payload?.payload?.table||payload?.table||"";
-    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations","academic_period_controls","report_correction_requests","student_lifecycle_events","transcript_issuances","privacy_requests","security_events","recovery_test_runs"].includes(table))state.workspace=null;
+    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations","academic_period_controls","report_correction_requests","student_lifecycle_events","transcript_issuances","privacy_requests","security_events","recovery_test_runs","certificate_templates","teacher_award_categories","certificate_batches","certificates","certificate_events"].includes(table))state.workspace=null;
     if(table==="report_card_templates"){state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear()}
     if(topic.startsWith("user:")||table==="notifications") loadNotificationCount();
     clearTimeout(handleRealtime.timer);
@@ -666,6 +670,7 @@
       } else if(state.view==="academics"&&topic==="school:global") renderAcademics(state.viewToken,true);
       else if(state.view==="delegations") renderEmergencyDelegations(state.viewToken,true);
       else if(state.view==="operations") renderOperations(state.viewToken,true);
+      else if(state.view==="certificates") renderCertificates(state.viewToken,true);
       else if(state.view==="history") renderAcademicHistory(state.viewToken,true);
       else if(state.view==="insights") renderInsights(state.viewToken,true);
       else if(state.view==="compliance") renderCompliance(state.viewToken,true);
@@ -3579,7 +3584,7 @@
     return imagePdf(jpeg,595.28,841.89);
   }
 
-  async function imagePdf(jpegBlob,pageWidth,pageHeight) {
+  async function imagePdf(jpegBlob,pageWidth,pageHeight,imageWidth=1240,imageHeight=1754) {
     const jpeg=new Uint8Array(await jpegBlob.arrayBuffer()),parts=[],offsets=[0];let length=0;
     const add=value=>{const bytes=typeof value==="string"?new TextEncoder().encode(value):value;parts.push(bytes);length+=bytes.length};
     add("%PDF-1.4\n%\xFF\xFF\xFF\xFF\n");
@@ -3587,7 +3592,7 @@
     object(1,"<< /Type /Catalog /Pages 2 0 R >>");
     object(2,"<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
     object(3,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
-    offsets[4]=length;add(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width 1240 /Height 1754 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);add(jpeg);add("\nendstream\nendobj\n");
+    offsets[4]=length;add(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);add(jpeg);add("\nendstream\nendobj\n");
     const content=`q\n${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im0 Do\nQ`;
     object(5,`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
     const xref=length;add("xref\n0 6\n0000000000 65535 f \n");
@@ -4627,7 +4632,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.0.2 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.1.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4815,7 +4820,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.0.2 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.1.0 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -4845,6 +4850,125 @@
     return `<span class="status draft">${esc(value||"Unknown")}</span>`;
   }
 
+
+  // Report Card Enterprise v7.1.0 certificates and awards module
+  const CERTIFICATE_TYPES=Object.freeze([
+    {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
+    {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
+    {value:"teacher_recognition",label:"Teacher Recognition",requiresTerm:false,requiresClass:false}
+  ]);
+  function certificateTypeLabel(value){return CERTIFICATE_TYPES.find(item=>item.value===value)?.label||String(value||"Certificate").replaceAll("_"," ")}
+  function certificateVerificationUrl(token){const school=state.boot?.school||{},base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;return `${base}${base.includes("?")?"&":"?"}certificate=${encodeURIComponent(token)}`}
+  function certificateStatusBadge(status){return statusBadge(status||"draft")}
+  async function renderCertificates(token,force=false){
+    if(!["system_admin","principal"].includes(role()))throw new Error("Certificate access denied");
+    const selectedYear=byId("certificateYear")?.value||activeYear()?.id||"",selectedType=byId("certificateTypeFilter")?.value||"";
+    if(force||!state.certificateConsole||state.certificateConsoleYear!==selectedYear||state.certificateConsoleType!==selectedType){
+      state.certificateConsole=await rpc("get_certificate_console",{target_academic_year_id:selectedYear||null,target_certificate_type:selectedType||null});
+      state.certificateConsoleYear=selectedYear;state.certificateConsoleType=selectedType;
+    }
+    if(token!==state.viewToken)return;
+    const data=state.certificateConsole||{},batches=data.batches||[],templates=data.templates||[],issued=batches.reduce((sum,item)=>sum+Number(item.issued_count||0),0),pending=batches.filter(item=>["submitted","approved"].includes(item.status)).length;
+    byId("content").innerHTML=`
+      <div class="page-head"><div><h3>Certificates and Awards</h3><p>Promotion, JHS completion, and teacher recognition certificates with Principal approval and public verification.</p></div><div class="page-actions">${role()==="system_admin"?`<button class="button ghost" id="certificateSettings" type="button">Templates and settings</button><button class="button primary" id="newCertificateBatch" type="button">Prepare certificate batch</button>`:""}</div></div>
+      <div class="stat-grid">${statCard("blue","▧","Certificate batches",batches.length)}${statCard("gold","⌛","Awaiting action",pending)}${statCard("green","✓","Issued certificates",issued)}${statCard("purple","◇","Active templates",templates.filter(item=>item.active).length)}</div>
+      <section class="panel"><div class="panel-header"><div><h3>Certificate register</h3><p>Every issued certificate keeps a frozen statement, unique number, verification token, revision, and audit history.</p></div><div class="filter-row"><select id="certificateYear">${optionList(state.boot.academic_years||[],"id","name",selectedYear,"All academic years")}</select><select id="certificateTypeFilter"><option value="">All certificate types</option>${CERTIFICATE_TYPES.map(item=>`<option value="${item.value}" ${item.value===selectedType?"selected":""}>${item.label}</option>`).join("")}</select></div></div>
+      ${batches.length?`<div class="table-wrap"><table><thead><tr><th>Batch</th><th>Academic scope</th><th>Recipients</th><th>Status</th><th>Prepared / approved</th><th>Action</th></tr></thead><tbody>${batches.map(item=>`<tr><td><strong>${esc(item.title)}</strong><br><small>${esc(item.type_label)} • ${isoDateTime(item.created_at)}</small></td><td>${esc(item.academic_year_name||"")}${item.term_name?`<br><small>${esc(item.term_name)}</small>`:""}${item.class_name?`<br><small>${esc(item.class_name)}</small>`:""}${item.award_category_name?`<br><small>${esc(item.award_category_name)}</small>`:""}</td><td>${number(item.recipient_count)} total<br><small>${number(item.issued_count)} issued</small></td><td>${certificateStatusBadge(item.status)}</td><td>${esc(item.prepared_by_name||"—")}${item.approved_by_name?`<br><small>Approved by ${esc(item.approved_by_name)}</small>`:""}</td><td><button class="button ghost small" data-certificate-batch="${attr(item.id)}" type="button">Open</button></td></tr>`).join("")}</tbody></table></div>`:emptyState("No certificate batches","Prepare the first certificate batch for this academic year.")}</section>`;
+    byId("certificateYear").onchange=()=>{state.certificateConsole=null;renderCertificates(state.viewToken,true)};
+    byId("certificateTypeFilter").onchange=()=>{state.certificateConsole=null;renderCertificates(state.viewToken,true)};
+    byId("newCertificateBatch")?.addEventListener("click",openCertificateBatchBuilder);
+    byId("certificateSettings")?.addEventListener("click",openCertificateSettings);
+    $$('[data-certificate-batch]').forEach(button=>button.onclick=()=>openCertificateBatch(button.dataset.certificateBatch));
+  }
+
+  async function openCertificateBatchBuilder(){
+    const data=state.certificateConsole||await rpc("get_certificate_console",{target_academic_year_id:activeYear()?.id||null,target_certificate_type:null}),categories=data.award_categories||[];
+    modal("Prepare certificate batch","Select the certificate purpose and load only recipients who satisfy the server-side eligibility rules.",`
+      <form id="certificateBatchForm" class="form-stack">
+        <div class="form-grid"><label class="field"><span>Certificate type</span><select name="certificate_type" required>${CERTIFICATE_TYPES.map(item=>`<option value="${item.value}">${item.label}</option>`).join("")}</select></label><label class="field"><span>Academic year</span><select name="academic_year_id" required>${optionList(state.boot.academic_years||[],"id","name",activeYear()?.id||"","Select academic year")}</select></label></div>
+        <div class="form-grid"><label class="field" id="certificateTermField"><span>Term</span><select name="term_id">${optionList(state.boot.terms||[],"id","name",activeTerm()?.id||"","Select term")}</select><small>Promotion certificates require Term 3. JHS completion can use Term 2 or another published completion term.</small></label><label class="field" id="certificateClassField"><span>Class</span><select name="class_id">${optionList(state.boot.classes||[],"id","name","","Select class")}</select></label></div>
+        <label class="field hidden" id="certificateAwardField"><span>Teacher award category</span><select name="award_category_id">${optionList(categories,"id","name","","Select award category")}</select></label>
+        <label class="field hidden" id="certificateCitationField"><span>Optional personalised citation</span><textarea name="custom_citation" rows="3" placeholder="Leave blank to use the category citation."></textarea></label>
+        <label class="field"><span>Administrative note</span><textarea name="notes" rows="2" placeholder="Ceremony, graduation, or recognition details"></textarea></label>
+        <div class="button-row"><button class="button secondary" id="loadCertificateRecipients" type="button">Load eligible recipients</button><button class="button ghost hidden" id="selectAllCertificateRecipients" type="button">Select all eligible</button></div>
+        <div id="certificateRecipientResults" class="stack-list">${emptyState("Recipients not loaded","Choose the academic scope, then load eligible recipients.")}</div>
+      </form>`,`<button class="button ghost" id="certificateBatchCancel" type="button">Cancel</button><button class="button primary" id="createCertificateBatch" type="button" disabled>Create batch</button>`,`wide`);
+    const form=byId("certificateBatchForm"),typeSelect=form.elements.certificate_type,termField=byId("certificateTermField"),classField=byId("certificateClassField"),awardField=byId("certificateAwardField"),citationField=byId("certificateCitationField");
+    const syncFields=()=>{const type=typeSelect.value,teacher=type==="teacher_recognition",promotion=type==="student_promotion";termField.classList.toggle("hidden",teacher);classField.classList.toggle("hidden",teacher);awardField.classList.toggle("hidden",!teacher);citationField.classList.toggle("hidden",!teacher);form.elements.term_id.required=promotion;form.elements.class_id.required=!teacher;form.elements.award_category_id.required=teacher;byId("certificateRecipientResults").innerHTML=emptyState("Recipients not loaded","Load the eligible list after changing the certificate type or scope.");byId("createCertificateBatch").disabled=true;byId("selectAllCertificateRecipients").classList.add("hidden")};
+    typeSelect.onchange=syncFields;syncFields();
+    byId("certificateBatchCancel").onclick=closeModal;
+    byId("loadCertificateRecipients").onclick=async()=>{
+      if(!form.reportValidity())return;const values=formObject(form),button=byId("loadCertificateRecipients");button.disabled=true;button.textContent="Loading";
+      try{const rows=await rpc("list_certificate_eligible_recipients",{target_certificate_type:values.certificate_type,target_academic_year_id:values.academic_year_id,target_term_id:values.term_id||null,target_class_id:values.class_id||null});
+        form.dataset.recipients=JSON.stringify(rows||[]);renderCertificateRecipientChoices(rows||[]);toast("Eligibility checked",`${(rows||[]).filter(item=>!item.already_issued).length} recipients are available.`)}catch(error){byId("certificateRecipientResults").innerHTML=emptyState("Eligibility check failed",friendlyError(error));toast("Recipients not loaded",friendlyError(error),"error")}finally{button.disabled=false;button.textContent="Load eligible recipients"}
+    };
+    byId("selectAllCertificateRecipients").onclick=()=>{$$('[name="certificate_recipient"]',form).forEach(input=>{if(!input.disabled)input.checked=true});syncCertificateRecipientSelection()};
+    byId("createCertificateBatch").onclick=async()=>{if(!form.reportValidity())return;const ids=$$('[name="certificate_recipient"]:checked',form).map(input=>input.value);if(!ids.length){toast("No recipients selected","Select at least one eligible recipient.","error");return}const values=formObject(form),button=byId("createCertificateBatch");button.disabled=true;button.textContent="Creating";try{const result=await rpc("create_certificate_batch",{payload:{certificate_type:values.certificate_type,academic_year_id:values.academic_year_id,term_id:values.term_id||"",class_id:values.class_id||"",award_category_id:values.award_category_id||"",custom_citation:values.custom_citation||"",notes:values.notes||""},recipient_ids:ids});closeModal();state.certificateConsole=null;toast("Certificate batch prepared",`${result.recipient_count} certificate records created.`);await renderCertificates(state.viewToken,true);await openCertificateBatch(result.batch_id)}catch(error){toast("Batch not created",friendlyError(error),"error",8000)}finally{button.disabled=false;button.textContent="Create batch"}};
+  }
+  function renderCertificateRecipientChoices(rows){const root=byId("certificateRecipientResults"),eligible=rows.filter(item=>!item.already_issued);root.innerHTML=rows.length?rows.map(item=>`<label class="list-card selectable ${item.already_issued?"disabled":""}"><input type="checkbox" name="certificate_recipient" value="${attr(item.id)}" ${item.already_issued?"disabled":""}><div><strong>${esc(item.recipient_name)}</strong><small>${esc(item.identifier||"")}${item.current_class_name?` • ${esc(item.current_class_name)}`:""}${item.destination_class_name?` → ${esc(item.destination_class_name)}`:""}${item.employment_status?` • ${esc(item.employment_status)}`:""}</small>${item.already_issued?`<span class="form-message">A current certificate record already exists.</span>`:""}</div></label>`).join(""):emptyState("No eligible recipients","Confirm that reports are published and the selected academic scope is correct.");$$('[name="certificate_recipient"]',root).forEach(input=>input.onchange=syncCertificateRecipientSelection);byId("selectAllCertificateRecipients").classList.toggle("hidden",!eligible.length);syncCertificateRecipientSelection()}
+  function syncCertificateRecipientSelection(){const count=$$('[name="certificate_recipient"]:checked',byId("certificateBatchForm")||document).length,button=byId("createCertificateBatch");if(button){button.disabled=count===0;button.textContent=count?`Create batch (${count})`:"Create batch"}}
+
+  async function openCertificateSettings(){
+    const data=await rpc("get_certificate_console",{target_academic_year_id:null,target_certificate_type:null}),templates=data.templates||[],categories=data.award_categories||[],settings=data.settings||{};
+    modal("Certificate templates and settings","Configure the purpose-specific statements, JHS completion class, school footer, and teacher recognition categories.",`
+      <div class="grid two"><section class="panel pad"><h4>School certificate settings</h4><form id="certificateSchoolSettings" class="form-stack"><label class="field"><span>JHS 3 completion class</span><select name="completion_class_id">${optionList(state.boot.classes||[],"id","name",settings.completion_class_id||"","Automatic Basic 9 / JHS 3 detection")}</select></label><label class="field"><span>Official footer</span><textarea name="footer_text" rows="3">${esc(settings.footer_text||"")}</textarea></label><button class="button primary" type="submit">Save settings</button></form></section><section class="panel pad"><h4>Teacher award categories</h4><div class="stack-list">${categories.map(item=>`<article class="list-card"><div><strong>${esc(item.name)}</strong><small>${esc(item.default_citation||"")}</small></div></article>`).join("")}</div><form id="newAwardCategory" class="form-stack"><label class="field"><span>New category name</span><input name="name" required></label><label class="field"><span>Default citation</span><textarea name="default_citation" rows="2"></textarea></label><button class="button secondary" type="submit">Add category</button></form></section></div>
+      <section class="panel pad" style="margin-top:16px"><h4>Purpose-specific certificate templates</h4><div class="stack-list">${templates.map(item=>`<form class="certificate-template-form list-card" data-template-id="${attr(item.id)}"><input type="hidden" name="id" value="${attr(item.id)}"><input type="hidden" name="certificate_type" value="${attr(item.certificate_type)}"><div class="form-grid"><label class="field"><span>${esc(certificateTypeLabel(item.certificate_type))} title</span><input name="title" value="${attr(item.title)}" required></label><label class="field"><span>Subtitle</span><input name="subtitle" value="${attr(item.subtitle||"")}"></label></div><label class="field"><span>Automatic statement template</span><textarea name="statement_template" rows="4" required>${esc(item.statement_template)}</textarea><small>Supported placeholders: {{recipient_name}}, {{current_class}}, {{next_class}}, {{academic_year}}, {{school_name}}, {{award_category}}, {{custom_citation}}.</small></label><label class="field"><span>Template footer</span><textarea name="footer_text" rows="2">${esc(item.footer_text||"")}</textarea></label><div class="form-grid"><label class="field"><span>Primary colour</span><input type="color" name="primary_colour" value="${attr(item.primary_colour||"#0a2f73")}"></label><label class="field"><span>Accent colour</span><input type="color" name="accent_colour" value="${attr(item.accent_colour||"#f1b51c")}"></label></div><button class="button primary small" type="submit">Save ${esc(certificateTypeLabel(item.certificate_type))} template</button></form>`).join("")}</div></section>`,`<button class="button ghost" id="certificateSettingsClose" type="button">Close</button>`,`wide`);
+    byId("certificateSettingsClose").onclick=closeModal;
+    byId("certificateSchoolSettings").onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector("button");button.disabled=true;try{await rpc("save_certificate_settings",{payload:formObject(form)});toast("Certificate settings saved");state.certificateConsole=null}catch(error){toast("Settings not saved",friendlyError(error),"error")}finally{button.disabled=false}};
+    byId("newAwardCategory").onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,button=form.querySelector("button");button.disabled=true;try{await rpc("save_teacher_award_category",{payload:formObject(form)});toast("Award category added");closeModal();state.certificateConsole=null;await openCertificateSettings()}catch(error){toast("Category not added",friendlyError(error),"error")}finally{button.disabled=false}};
+    $$(".certificate-template-form").forEach(form=>form.onsubmit=async event=>{event.preventDefault();const button=form.querySelector("button");button.disabled=true;try{await rpc("save_certificate_template",{payload:formObject(form)});toast("Certificate template saved");state.certificateConsole=null}catch(error){toast("Template not saved",friendlyError(error),"error")}finally{button.disabled=false}});
+  }
+
+  async function openCertificateBatch(batchId){
+    const data=await rpc("get_certificate_batch",{target_batch_id:batchId});if(!data?.batch)throw new Error("Certificate batch not found");state.certificateBatch=data;const b=data.batch,certs=data.certificates||[],events=data.events||[];
+    const actions=role()==="system_admin"&&["draft","rejected"].includes(b.status)?`<button class="button primary" id="certificateSubmitBatch" type="button">Submit for Principal approval</button>`:role()==="principal"&&b.status==="submitted"?`<button class="button warning" id="certificateRejectBatch" type="button">Reject</button><button class="button primary" id="certificateApproveBatch" type="button">Approve all</button>`:role()==="system_admin"&&b.status==="approved"?`<button class="button primary" id="certificateIssueBatch" type="button">Issue all and create PDFs</button>`:b.status==="issued"?`<button class="button secondary" id="certificateDownloadBatch" type="button">${role()==="system_admin"?"Refresh PDFs and download ZIP":"Download available PDFs"}</button>`:"";
+    modal(b.title,`${b.type_label} • ${b.academic_year_name}${b.term_name?` • ${b.term_name}`:""}${b.class_name?` • ${b.class_name}`:""}`,`
+      <div class="grid two"><section class="panel pad"><h4>Workflow</h4><div class="verify-result">${verifyField("Status",b.status)}${verifyField("Prepared by",b.prepared_by_name)}${verifyField("Submitted",isoDateTime(b.submitted_at))}${verifyField("Approved by",b.approved_by_name)}${verifyField("Issued",isoDateTime(b.issued_at))}</div>${b.review_note?`<p class="help-text"><strong>Review note:</strong> ${esc(b.review_note)}</p>`:""}</section><section class="panel pad"><h4>Eligibility and statement</h4><p>${esc(data.template?.statement_template||"")}</p>${b.award_category_name?`<p><strong>Award:</strong> ${esc(b.award_category_name)}</p>`:""}${b.custom_citation?`<p><strong>Citation:</strong> ${esc(b.custom_citation)}</p>`:""}</section></div>
+      <section class="panel" style="margin-top:16px"><div class="panel-header"><div><h4>Recipients</h4><p>${certs.length} certificate record${certs.length===1?"":"s"}</p></div></div><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Purpose</th><th>Certificate</th><th>PDF</th><th>Actions</th></tr></thead><tbody>${certs.map(cert=>`<tr><td><strong>${esc(cert.recipient_name)}</strong><br><small>${esc(cert.recipient_identifier||"")}${cert.current_class_name?` • ${esc(cert.current_class_name)}`:""}</small></td><td>${cert.award_category_name?esc(cert.award_category_name):cert.destination_class_name?`${esc(cert.current_class_name)} → ${esc(cert.destination_class_name)}`:esc(certificateTypeLabel(b.certificate_type))}<br><small>Revision ${number(cert.revision_no)}</small></td><td>${cert.certificate_number?`<code>${esc(cert.certificate_number)}</code><br>`:""}${certificateStatusBadge(cert.status)}</td><td>${cert.pdf_storage_path?`Ready<br><small>${esc(cert.pdf_sha256?.slice(0,12)||"")}…</small>`:"Not created"}</td><td><div class="button-row compact">${cert.status==="issued"&&role()==="system_admin"?`<button class="button secondary small" data-cert-generate="${attr(cert.id)}">Create / refresh PDF</button>`:""}${cert.status==="issued"&&cert.pdf_storage_path?`<button class="button ghost small" data-cert-download="${attr(cert.id)}">Download</button>`:""}${cert.verification_token?`<button class="button ghost small" data-cert-copy="${attr(cert.verification_token)}">Copy verification</button>`:""}${cert.status==="issued"&&["system_admin","principal"].includes(role())?`<button class="button warning small" data-cert-revoke="${attr(cert.id)}">Revoke</button>`:""}${["issued","revoked"].includes(cert.status)&&role()==="system_admin"?`<button class="button ghost small" data-cert-replace="${attr(cert.id)}">Replacement</button>`:""}</div></td></tr>`).join("")}</tbody></table></div></section>
+      <section class="panel" style="margin-top:16px"><div class="panel-header"><div><h4>Immutable certificate history</h4><p>Preparation, approval, issue, PDF registration, revocation, and replacement events.</p></div></div>${events.length?`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Reason</th></tr></thead><tbody>${events.map(event=>`<tr><td>${isoDateTime(event.created_at)}</td><td>${esc(event.event_type.replaceAll("_"," "))}</td><td>${esc(event.actor_name||"System")}</td><td>${esc(event.reason||"")}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No certificate events")}</section>`,
+      `<button class="button ghost" id="certificateBatchClose" type="button">Close</button>${actions}`,`wide`);
+    byId("certificateBatchClose").onclick=()=>{closeModal();state.certificateConsole=null;renderCertificates(state.viewToken,true)};
+    byId("certificateSubmitBatch")?.addEventListener("click",()=>submitCertificateBatch(batchId));
+    byId("certificateApproveBatch")?.addEventListener("click",()=>reviewCertificateBatch(batchId,"approved"));
+    byId("certificateRejectBatch")?.addEventListener("click",()=>reviewCertificateBatch(batchId,"rejected"));
+    byId("certificateIssueBatch")?.addEventListener("click",()=>issueCertificateBatch(batchId));
+    byId("certificateDownloadBatch")?.addEventListener("click",()=>generateCertificateBatchPdfs(data,true));
+    $$('[data-cert-generate]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{const cert=certs.find(item=>item.id===button.dataset.certGenerate);await createAndStoreCertificatePdf(data,cert);toast("Certificate PDF created");closeModal();await openCertificateBatch(batchId)}catch(error){toast("Certificate PDF not created",friendlyError(error),"error",8000)}finally{button.disabled=false}});
+    $$('[data-cert-download]').forEach(button=>button.onclick=()=>downloadStoredCertificatePdf(data,certs.find(item=>item.id===button.dataset.certDownload)));
+    $$('[data-cert-copy]').forEach(button=>button.onclick=async()=>{await navigator.clipboard.writeText(certificateVerificationUrl(button.dataset.certCopy));toast("Verification link copied")});
+    $$('[data-cert-revoke]').forEach(button=>button.onclick=()=>revokeCertificateRecord(batchId,button.dataset.certRevoke));
+    $$('[data-cert-replace]').forEach(button=>button.onclick=()=>replaceCertificateRecord(batchId,certs.find(item=>item.id===button.dataset.certReplace)));
+  }
+
+  async function submitCertificateBatch(batchId){if(!await confirmAction("Submit certificate batch","The Principal will review every certificate in this batch before it can be issued.","Submit"))return;try{await rpc("submit_certificate_batch",{target_batch_id:batchId});toast("Certificates submitted");closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true);await openCertificateBatch(batchId)}catch(error){toast("Batch not submitted",friendlyError(error),"error")}}
+  async function reviewCertificateBatch(batchId,decision){const note=window.prompt(`${decision==="approved"?"Approval":"Rejection"} note:`,"")??"";if(decision==="rejected"&&note.trim().length<3){toast("Rejection note required","Enter the reason for returning the batch.","error");return}try{await rpc("review_certificate_batch",{target_batch_id:batchId,decision,review_note_text:note.trim()});toast(`Batch ${decision}`);closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true);await openCertificateBatch(batchId)}catch(error){toast("Review not saved",friendlyError(error),"error")}}
+  async function issueCertificateBatch(batchId){const issueDate=window.prompt("Certificate issue date (YYYY-MM-DD):",new Date().toISOString().slice(0,10));if(!issueDate)return;if(!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)){toast("Invalid issue date","Use YYYY-MM-DD.","error");return}if(!await confirmAction("Issue all certificates","Unique certificate numbers and verification tokens will be permanently assigned. Official PDFs will then be created.","Issue certificates"))return;setLoading(true);try{await rpc("issue_certificate_batch",{target_batch_id:batchId,target_issue_date:issueDate});const data=await rpc("get_certificate_batch",{target_batch_id:batchId});await generateCertificateBatchPdfs(data,true);toast("Certificates issued",`${data.certificates?.length||0} certificates were issued and processed.`);closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true)}catch(error){toast("Certificates not issued",friendlyError(error),"error",9000);await reportClientError(error,{source:"certificate_issue",batch_id:batchId})}finally{setLoading(false)}}
+  async function revokeCertificateRecord(batchId,certificateId){const reason=window.prompt("Reason for revoking this certificate:","")||"";if(reason.trim().length<5)return;if(!await confirmAction("Revoke certificate","The public verification page will immediately show that this certificate is invalid.","Revoke",true))return;try{await rpc("revoke_certificate",{target_certificate_id:certificateId,reason_text:reason.trim()});toast("Certificate revoked");closeModal();state.certificateConsole=null;await openCertificateBatch(batchId)}catch(error){toast("Certificate not revoked",friendlyError(error),"error")}}
+  async function replaceCertificateRecord(batchId,certificate){const reason=window.prompt("Reason for creating a replacement certificate:","")||"";if(reason.trim().length<5)return;modal("Replacement certificate statement","The replacement will follow the full submission and Principal approval workflow. Leave the statement unchanged or correct it below.",`<label class="field"><span>Certificate statement</span><textarea id="replacementCertificateStatement" rows="7">${esc(certificate.statement_text)}</textarea></label>`,`<button class="button ghost" id="replacementCancel">Cancel</button><button class="button primary" id="replacementCreate">Create replacement draft</button>`,`small`);byId("replacementCancel").onclick=closeModal;byId("replacementCreate").onclick=async()=>{const button=byId("replacementCreate");button.disabled=true;try{const result=await rpc("create_certificate_replacement_draft",{target_certificate_id:certificate.id,reason_text:reason.trim(),replacement_statement:byId("replacementCertificateStatement").value.trim()});closeModal();state.certificateConsole=null;toast("Replacement draft created");await renderCertificates(state.viewToken,true);await openCertificateBatch(result.batch_id)}catch(error){toast("Replacement not created",friendlyError(error),"error")}finally{button.disabled=false}}}
+
+  async function createCertificatePdf(data,certificate){
+    const canvas=document.createElement("canvas");canvas.width=1754;canvas.height=1240;const frozen=certificate.snapshot||{},ctx=canvas.getContext("2d"),template=frozen.template||data.template||{},school=frozen.school||data.school||state.boot?.school||{},principal=frozen.principal||data.principal||{},primary=template.primary_colour||school.primary_colour||"#0a2f73",accent=template.accent_colour||school.accent_colour||"#f1b51c";
+    ctx.fillStyle="#fffdf7";ctx.fillRect(0,0,canvas.width,canvas.height);ctx.strokeStyle=primary;ctx.lineWidth=18;ctx.strokeRect(34,34,1686,1172);ctx.strokeStyle=accent;ctx.lineWidth=5;ctx.strokeRect(58,58,1638,1124);ctx.strokeStyle=primary;ctx.lineWidth=2;ctx.strokeRect(75,75,1604,1090);
+    [[85,85],[1669,85],[85,1155],[1669,1155]].forEach(([x,y],index)=>{ctx.save();ctx.translate(x,y);ctx.rotate(index%2?Math.PI/2:0);ctx.fillStyle=accent;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(95,0);ctx.lineTo(0,95);ctx.closePath();ctx.fill();ctx.restore()});
+    let logo=null,signature=null;try{logo=await loadImage(schoolDisplayLogo(school))}catch(_){}try{if(principal.signature_path)signature=await loadImage(await signedUrl(CONFIG.signatureBucket,principal.signature_path,900))}catch(_){}
+    if(logo)drawImageContain(ctx,logo,757,92,240,170);
+    ctx.textAlign="center";ctx.fillStyle=primary;ctx.font='bold 44px Georgia, "Times New Roman", serif';ctx.fillText(String(school.school_name||schoolDisplayName()).toUpperCase(),877,292);ctx.fillStyle="#5c6470";ctx.font='italic 24px Georgia, "Times New Roman", serif';ctx.fillText(school.motto||"",877,330);
+    ctx.fillStyle=accent;ctx.fillRect(520,365,714,4);ctx.fillStyle=primary;ctx.font='bold 68px Georgia, "Times New Roman", serif';ctx.fillText(certificate.certificate_title||template.title||"Certificate",877,455);ctx.fillStyle="#5c6470";ctx.font='24px Arial, sans-serif';ctx.fillText(template.subtitle||certificateTypeLabel(data.batch?.certificate_type),877,500);
+    ctx.fillStyle="#30343b";ctx.font='24px Georgia, "Times New Roman", serif';ctx.fillText("This certificate is presented to",877,565);ctx.fillStyle=primary;let recipientSize=58;while(recipientSize>30){ctx.font=`bold ${recipientSize}px Georgia, "Times New Roman", serif`;if(ctx.measureText(certificate.recipient_name).width<=1180)break;recipientSize-=2}ctx.fillText(certificate.recipient_name,877,650);ctx.strokeStyle=accent;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(390,670);ctx.lineTo(1364,670);ctx.stroke();
+    ctx.fillStyle="#30343b";let statementSize=27,statementLines=[];while(statementSize>=16){ctx.font=`${statementSize}px Georgia, "Times New Roman", serif`;statementLines=wrappedTextLines(ctx,certificate.statement_text,1280);if(statementLines.length<=7)break;statementSize-=1}const statementLineHeight=Math.max(27,statementSize*1.38),statementTop=710+(7-statementLines.length)*statementLineHeight/2;statementLines.slice(0,7).forEach((line,index)=>ctx.fillText(line,877,statementTop+index*statementLineHeight));
+    if(certificate.award_category_name){ctx.fillStyle=primary;ctx.font='bold 25px Arial, sans-serif';ctx.fillText(certificate.award_category_name,877,955)}
+    ctx.fillStyle="#5c6470";ctx.font='22px Arial, sans-serif';ctx.fillText(`Academic Year: ${certificate.academic_year_name}`,877,1002);
+    if(signature)drawImageContain(ctx,signature,690,980,374,105);ctx.strokeStyle="#5c6470";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(640,1091);ctx.lineTo(1114,1091);ctx.stroke();ctx.fillStyle="#30343b";ctx.font='bold 22px Arial, sans-serif';ctx.fillText(principal.full_name||school.head_name||"Principal",877,1120);ctx.fillStyle="#5c6470";ctx.font='18px Arial, sans-serif';ctx.fillText("Principal",877,1147);
+    const qr=await qrCanvas(certificateVerificationUrl(certificate.verification_token));if(qr)ctx.drawImage(qr,1370,925,190,190);ctx.textAlign="left";ctx.fillStyle="#5c6470";ctx.font='17px Arial, sans-serif';ctx.fillText(`Certificate No.: ${certificate.certificate_number||"Pending"}`,120,1080);ctx.fillText(`Issue Date: ${isoDate(certificate.issue_date)}`,120,1110);ctx.fillText(`Revision: ${certificate.revision_no||1}`,120,1140);ctx.textAlign="center";ctx.font='italic 17px Georgia, "Times New Roman", serif';ctx.fillText(template.footer_text||school.certificate_footer_text||"Issued under the authority of the school administration.",877,1192);
+    const jpeg=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",.97));return imagePdf(jpeg,841.89,595.28,1754,1240);
+  }
+  function wrappedTextLines(ctx,text,maxWidth){const words=String(text||"").split(/\s+/).filter(Boolean),lines=[];let line="";for(const word of words){const next=line?`${line} ${word}`:word;if(ctx.measureText(next).width>maxWidth&&line){lines.push(line);line=word}else line=next}if(line)lines.push(line);return lines}
+  async function createAndStoreCertificatePdf(data,certificate){if(role()!=="system_admin")throw new Error("Only the System Administrator can create official certificate PDFs");if(!certificate||certificate.status!=="issued")throw new Error("Only an issued certificate can have an official PDF");const pdf=await createCertificatePdf(data,certificate),checksum=await sha256(pdf),year=safeArchiveSegment(certificate.academic_year_name,"year"),safeNumber=safeArchiveSegment(certificate.certificate_number,"certificate"),path=`${data.batch.certificate_type}/${year}/${safeNumber}-r${certificate.revision_no}-${Date.now()}.pdf`,previous=certificate.pdf_storage_path||"";const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).upload(path,pdf,{contentType:"application/pdf",upsert:false,cacheControl:"31536000"});if(error)throw error;try{await rpc("register_certificate_pdf",{target_certificate_id:certificate.id,target_storage_path:path,target_checksum:checksum})}catch(error){await state.client.storage.from(CONFIG.certificatePdfBucket).remove([path]).catch(()=>{});throw error}if(previous&&previous!==path)await state.client.storage.from(CONFIG.certificatePdfBucket).remove([previous]).catch(()=>{});certificate.pdf_storage_path=path;certificate.pdf_sha256=checksum;return {pdf,path,checksum}}
+  async function downloadStoredCertificatePdf(data,certificate){setLoading(true);try{let blob;if(role()==="system_admin"){blob=(await createAndStoreCertificatePdf(data,certificate)).pdf}else{if(!certificate.pdf_storage_path)throw new Error("Official certificate PDF has not been created");const url=await signedUrl(CONFIG.certificatePdfBucket,certificate.pdf_storage_path,300);const response=await fetch(url);if(!response.ok)throw new Error("Certificate PDF could not be downloaded");blob=await response.blob()}downloadBlob(`${safeArchiveSegment(certificate.certificate_number,"Certificate")}_${safeArchiveSegment(certificate.recipient_name,"Recipient")}.pdf`,blob);toast("Certificate downloaded")}catch(error){toast("Certificate unavailable",friendlyError(error),"error")}finally{setLoading(false)}}
+  async function generateCertificateBatchPdfs(data,downloadZip=true){if(!window.JSZip&&downloadZip)throw new Error("ZIP library unavailable");const issued=(data.certificates||[]).filter(item=>item.status==="issued"),zip=downloadZip?new window.JSZip():null,manifest=[];if(!issued.length)throw new Error("No issued certificates are available");for(let index=0;index<issued.length;index++){const cert=issued[index];try{let pdf;if(role()==="system_admin")pdf=(await createAndStoreCertificatePdf(data,cert)).pdf;else{if(!cert.pdf_storage_path)throw new Error("Official PDF not created");const url=await signedUrl(CONFIG.certificatePdfBucket,cert.pdf_storage_path,300),response=await fetch(url);if(!response.ok)throw new Error("PDF download failed");pdf=await response.blob()}const filename=`${safeArchiveSegment(cert.certificate_number,"Certificate")}_${safeArchiveSegment(cert.recipient_name,"Recipient")}.pdf`;if(zip)zip.file(filename,pdf);manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"included",file_name:filename,error:""})}catch(error){manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"failed",file_name:"",error:friendlyError(error)});await reportClientError(error,{source:"certificate_batch_pdf",certificate_id:cert.id})}}
+    if(zip){const headers=["certificate_number","recipient","status","file_name","error"];zip.file("CERTIFICATE_MANIFEST.csv",[headers.join(","),...manifest.map(row=>headers.map(key=>csvCell(row[key])).join(","))].join("\n"));const included=manifest.filter(row=>row.status==="included");if(!included.length)throw new Error("No certificate PDFs could be prepared");const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});downloadBlob(`${safeArchiveSegment(data.batch.title,"Certificates")}_${safeArchiveSegment(data.batch.academic_year_name,"Year")}.zip`,blob);toast("Certificate package downloaded",`${included.length} certificate PDF${included.length===1?"":"s"} included.`)}return manifest}
+
+
   async function renderGithubNavigator(token,force=false) {
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
     if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status");
@@ -4857,7 +4981,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_0_0.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_1_0.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -4937,7 +5061,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.0.2 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.1.0 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
@@ -4972,13 +5096,16 @@
     catch(error){toast("Package not revoked",friendlyError(error),"error",8000)}finally{button.disabled=false}
   }
 
-  async function showVerification(token,isTranscript=false) {
+  async function showVerification(token,verificationType="report") {
     showOnly("verifyView");
-    const root=byId("verifyView");root.innerHTML=`<div class="verify-card"><div class="empty">Verifying ${isTranscript?"transcript":"report"}</div></div>`;
+    const root=byId("verifyView");root.innerHTML=`<div class="verify-card"><div class="empty">Verifying ${verificationType}</div></div>`;
     try{
       if(!isConfigured()||!window.supabase?.createClient)throw new Error("Verification service unavailable");
       if(!state.client)state.client=window.supabase.createClient(CONFIG.supabaseUrl,CONFIG.supabaseAnonKey,{auth:{persistSession:false}});
-      if(isTranscript){
+      if(verificationType==="certificate"){
+        const data=await rpc("verify_certificate",{token});
+        root.innerHTML=`<section class="verify-card"><div class="verify-head"><img src="${schoolDisplayLogo()}" alt=""><div><h1>${esc(data.school_name||schoolDisplayName())}</h1><p>Certificate Verification</p></div></div><div class="verify-state ${data.valid?"valid":"invalid"}">${data.valid?"Authentic issued certificate":data.status==="revoked"?"Certificate revoked":data.status==="superseded"?"Certificate superseded":"Certificate not verified"}</div>${data.found?`<div class="verify-result">${verifyField("Certificate number",data.certificate_number)}${verifyField("Recipient",data.recipient_name)}${verifyField("Certificate",data.certificate_title||data.certificate_type_label)}${verifyField("Academic year",data.academic_year)}${data.class_name?verifyField("Class",data.class_name):""}${data.promoted_to?verifyField("Promoted to",data.promoted_to):""}${data.award_category?verifyField("Recognition",data.award_category):""}${verifyField("Issue date",isoDate(data.issue_date))}${data.revocation_reason?verifyField("Revocation reason",data.revocation_reason):""}${data.superseded_by?verifyField("Replacement certificate",data.superseded_by):""}</div>`:""}</section>`;
+      }else if(verificationType==="transcript"){
         const data=await rpc("verify_transcript",{token});
         root.innerHTML=`<section class="verify-card"><div class="verify-head"><img src="${schoolDisplayLogo()}" alt=""><div><h1>${esc(data.school_name||schoolDisplayName())}</h1><p>Academic Transcript Verification</p></div></div><div class="verify-state ${data.valid?"valid":"invalid"}">${data.valid?"Authentic current transcript":data.status==="revoked"?"Transcript revoked":data.status==="superseded"?"Transcript superseded":"Transcript not verified"}</div>${data.student_name?`<div class="verify-result">${verifyField("Student",data.student_name)}${verifyField("Admission number",data.admission_no)}${verifyField("Purpose",data.purpose)}${verifyField("Academic records",number(data.record_count))}${verifyField("Issued",isoDateTime(data.issued_at))}${data.revocation_reason?verifyField("Revocation reason",data.revocation_reason):""}</div>`:""}</section>`;
       }else{
