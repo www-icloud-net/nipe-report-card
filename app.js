@@ -2791,6 +2791,37 @@
   function drawImageContain(ctx,image,x,y,width,height) {
     const scale=Math.min(width/image.width,height/image.height),drawWidth=image.width*scale,drawHeight=image.height*scale;ctx.drawImage(image,x+(width-drawWidth)/2,y+(height-drawHeight)/2,drawWidth,drawHeight);
   }
+  const signatureRenderCache=new WeakMap();
+  function preparedSignatureCanvas(image) {
+    if(!image)return null;
+    if(signatureRenderCache.has(image))return signatureRenderCache.get(image);
+    try{
+      const width=image.naturalWidth||image.width,height=image.naturalHeight||image.height;
+      if(!width||!height)return image;
+      const source=document.createElement("canvas");source.width=width;source.height=height;
+      const sourceCtx=source.getContext("2d",{willReadFrequently:true});sourceCtx.drawImage(image,0,0,width,height);
+      const pixels=sourceCtx.getImageData(0,0,width,height),data=pixels.data;
+      let minX=width,minY=height,maxX=-1,maxY=-1;
+      for(let y=0;y<height;y+=1){for(let x=0;x<width;x+=1){
+        const offset=(y*width+x)*4,r=data[offset],g=data[offset+1],b=data[offset+2],a=data[offset+3];
+        if(a<=10||r>246&&g>246&&b>246){data[offset+3]=0;continue}
+        minX=Math.min(minX,x);minY=Math.min(minY,y);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);
+      }}
+      if(maxX<minX||maxY<minY){signatureRenderCache.set(image,image);return image}
+      sourceCtx.putImageData(pixels,0,0);
+      const padding=4,sx=Math.max(0,minX-padding),sy=Math.max(0,minY-padding),sw=Math.min(width-sx,maxX-minX+1+padding*2),sh=Math.min(height-sy,maxY-minY+1+padding*2);
+      const cropped=document.createElement("canvas");cropped.width=sw;cropped.height=sh;cropped.getContext("2d").drawImage(source,sx,sy,sw,sh,0,0,sw,sh);
+      signatureRenderCache.set(image,cropped);return cropped;
+    }catch(_){signatureRenderCache.set(image,image);return image}
+  }
+  function drawSignatureOnLine(ctx,image,left,right,lineY,maxHeight=100,lineColour="#5f708b",lineWidth=1.2) {
+    ctx.save();ctx.strokeStyle=lineColour;ctx.lineWidth=lineWidth;ctx.beginPath();ctx.moveTo(left,lineY);ctx.lineTo(right,lineY);ctx.stroke();
+    if(image){
+      const prepared=preparedSignatureCanvas(image),width=prepared.width||image.width,height=prepared.height||image.height;
+      if(width&&height){const scale=Math.min((right-left)*.78/width,maxHeight/height),drawWidth=width*scale,drawHeight=height*scale,x=(left+right-drawWidth)/2,y=lineY-drawHeight+3;ctx.drawImage(prepared,x,y,drawWidth,drawHeight)}
+    }
+    ctx.restore();
+  }
   function drawImageCover(ctx,image,x,y,width,height) {
     const scale=Math.max(width/image.width,height/image.height),drawWidth=image.width*scale,drawHeight=image.height*scale;
     ctx.drawImage(image,x+(width-drawWidth)/2,y+(height-drawHeight)/2,drawWidth,drawHeight);
@@ -3480,10 +3511,8 @@
       drawCenteredReportText(ctx,second,900,1190,shift(1447));
     }
 
-    const signatureLeft=515,signatureRight=865,signatureTop=shift(1370);
-    if(signatureImage)drawImageContain(ctx,signatureImage,555,signatureTop,270,100);
-    ctx.strokeStyle="#5f708b";ctx.lineWidth=1.2;
-    ctx.beginPath();ctx.moveTo(signatureLeft,shift(1485));ctx.lineTo(signatureRight,shift(1485));ctx.stroke();
+    const signatureLeft=515,signatureRight=865,signatureLineY=shift(1485);
+    drawSignatureOnLine(ctx,signatureImage,signatureLeft,signatureRight,signatureLineY,100,"#5f708b",1.2);
     ctx.fillStyle=ink;setReportFont(ctx,18,"bold");
     drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,shift(1512));
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
@@ -3641,9 +3670,8 @@
       drawCenteredReportText(ctx,second,900,1190,shift(1447));
     }
 
-    const signatureLeft=515,signatureRight=865,signatureTop=shift(1370);
-    if(signatureImage)drawImageContain(ctx,signatureImage,555,signatureTop,270,100);
-    ctx.strokeStyle="#5f708b";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(signatureLeft,shift(1485));ctx.lineTo(signatureRight,shift(1485));ctx.stroke();
+    const signatureLeft=515,signatureRight=865,signatureLineY=shift(1485);
+    drawSignatureOnLine(ctx,signatureImage,signatureLeft,signatureRight,signatureLineY,100,"#5f708b",1.2);
     ctx.fillStyle=ink;setReportFont(ctx,18,"bold");drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,shift(1512));
     ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,shift(1538));
 
@@ -4743,7 +4771,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.1.4 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.1.5 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5007,7 +5035,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.1.4 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.1.5 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5038,7 +5066,7 @@
   }
 
 
-  // Report Card Enterprise v7.1.4 certificate PDF fallback, permanent deletion, and transcript PDF reliability
+  // Report Card Enterprise v7.1.5 certificate watermark and signature alignment reliability
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5262,11 +5290,11 @@
       ctx.strokeStyle=accent;ctx.lineWidth=5;ctx.strokeRect(58,58,1638,1124);
       ctx.strokeStyle=primary;ctx.lineWidth=2;ctx.strokeRect(75,75,1604,1090);
       [[85,85],[1669,85],[85,1155],[1669,1155]].forEach(([x,y],index)=>{ctx.save();ctx.translate(x,y);ctx.rotate(index%2?Math.PI/2:0);ctx.fillStyle=accent;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(95,0);ctx.lineTo(0,95);ctx.closePath();ctx.fill();ctx.restore()});
-      ctx.strokeStyle="rgba(10,47,115,.18)";ctx.lineWidth=2;ctx.beginPath();ctx.arc(877,620,470,0,Math.PI*2);ctx.stroke();
     }
     let logo=null,signature=null;
     try{logo=await loadImage(schoolDisplayLogo(school))}catch(_){}
     try{if(principal.signature_path)signature=await loadImage(await signedUrl(CONFIG.signatureBucket,principal.signature_path,900))}catch(_){}
+    if(!uploadedTemplateApplied&&logo){ctx.save();ctx.globalAlpha=.06;drawImageContain(ctx,logo,527,300,700,700);ctx.restore()}
     if(logo)drawImageContain(ctx,logo,757,92,240,170);
     ctx.textAlign="center";ctx.fillStyle=primary;ctx.font='bold 44px Georgia, "Times New Roman", serif';ctx.fillText(String(school.school_name||schoolDisplayName()).toUpperCase(),877,292);
     ctx.fillStyle="#5c6470";ctx.font='italic 24px Georgia, "Times New Roman", serif';ctx.fillText(school.motto||"",877,330);
@@ -5284,8 +5312,7 @@
     statementLines.slice(0,7).forEach((line,index)=>ctx.fillText(line,877,statementTop+index*statementLineHeight));
     if(certificate.award_category_name){ctx.fillStyle=primary;ctx.font='bold 25px Arial, sans-serif';ctx.fillText(certificate.award_category_name,877,955)}
     ctx.fillStyle="#5c6470";ctx.font='22px Arial, sans-serif';ctx.fillText(`Academic Year: ${certificate.academic_year_name}`,877,1002);
-    if(signature)drawImageContain(ctx,signature,690,980,374,105);
-    ctx.strokeStyle="#5c6470";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(640,1091);ctx.lineTo(1114,1091);ctx.stroke();
+    drawSignatureOnLine(ctx,signature,640,1114,1091,105,"#5c6470",1.5);
     ctx.fillStyle="#30343b";ctx.font='bold 22px Arial, sans-serif';ctx.fillText(principal.full_name||school.head_name||"Principal",877,1120);
     ctx.fillStyle="#5c6470";ctx.font='18px Arial, sans-serif';ctx.fillText("Principal",877,1147);
     const qr=await qrCanvas(certificateVerificationUrl(certificate.verification_token));if(qr)ctx.drawImage(qr,1370,925,190,190);
@@ -5393,7 +5420,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.1.4 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.1.5 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
