@@ -3355,19 +3355,29 @@
     const school=state.boot.school||{},ink="#17233b",summaryPale="#eef4fb";
     const {logo,signer={},signatureImage,studentPhotoImage}=assets;
     const showStudentPhoto=!manual&&Boolean(studentPhotoImage);
-    const tableLeft=38,tableRight=1202,tableTop=338,headerHeight=58,maximumTableBottom=1086;
-    const bodyTop=tableTop+headerHeight,columns=[38,286,464,646,762,862,994,1202];
-    const tableLayout=reportTableLayout(ctx,subjects,columns,bodyTop,maximumTableBottom);
-    const {displaySubjects,weights,availableHeight,tableBottom}=tableLayout;
-    const lowerOffset=tableBottom-maximumTableBottom,shift=y=>y+lowerOffset;
+
+    // Final approved Nipe Terminal Report field map. Uploaded templates use the
+    // same protected A4 field map; when none is assigned, the bundled approved
+    // Nipe template is loaded automatically by resolveAssignedReportTemplate().
+    const tableLeft=38,tableRight=1202,tableTop=340,headerHeight=57,tableBottom=738;
+    const bodyTop=tableTop+headerHeight;
+    const columns=[38,320,499,681,780,874,1005,1202];
+    const source=Array.isArray(subjects)?subjects.filter(Boolean):[];
+    const displaySubjects=[...source,null];
+    setReportFont(ctx,20,"normal");
+    const weights=displaySubjects.map(subject=>subject&&reportTextLines(ctx,subject.subject_name||subject.name||"",columns[1]-columns[0]-16,2).length>1?1.34:1);
+    const availableHeight=tableBottom-bodyTop;
+    const weightTotal=weights.reduce((sum,value)=>sum+value,0)||1;
 
     ctx.textBaseline="alphabetic";
 
-    // Remove all pre-filled or sample values from the uploaded design before
-    // inserting the live student data. Static headings and the uploaded visual
-    // design remain untouched.
+    // Clear only dynamic fields. Static branding, headings, grading scale and
+    // the How to Read Your Report panel remain exactly as designed.
     ctx.fillStyle="#ffffff";
-    ctx.fillRect(38,232,1164,103);
+    ctx.fillRect(38,232,1164,105);
+    ctx.fillRect(tableLeft-1,bodyTop+1,tableRight-tableLeft+2,tableBottom-bodyTop-1);
+    ctx.fillStyle=summaryPale;ctx.fillRect(tableLeft,tableBottom,tableRight-tableLeft,140);
+    ctx.fillStyle="#ffffff";ctx.fillRect(38,878,1164,357);
 
     const identityName=manual?"....................................................................":student.full_name||"";
     const identityAdmission=manual?"NIS.......":student.admission_no||"";
@@ -3383,149 +3393,77 @@
     if(showStudentPhoto){
       const frameX=1075,frameY=48,frameWidth=105,frameHeight=161,padding=4;
       ctx.fillStyle="#ffffff";ctx.fillRect(frameX,frameY,frameWidth,frameHeight);
-      ctx.strokeStyle="rgba(255,255,255,.96)";ctx.lineWidth=2;
-      ctx.strokeRect(frameX-.5,frameY-.5,frameWidth+1,frameHeight+1);
-      ctx.save();
-      ctx.beginPath();ctx.rect(frameX+padding,frameY+padding,frameWidth-padding*2,frameHeight-padding*2);ctx.clip();
-      drawImageCover(ctx,studentPhotoImage,frameX+padding,frameY+padding,frameWidth-padding*2,frameHeight-padding*2);
-      ctx.restore();
+      ctx.strokeStyle="rgba(255,255,255,.96)";ctx.lineWidth=2;ctx.strokeRect(frameX-.5,frameY-.5,frameWidth+1,frameHeight+1);
+      ctx.save();ctx.beginPath();ctx.rect(frameX+padding,frameY+padding,frameWidth-padding*2,frameHeight-padding*2);ctx.clip();
+      drawImageCover(ctx,studentPhotoImage,frameX+padding,frameY+padding,frameWidth-padding*2,frameHeight-padding*2);ctx.restore();
     }
 
-    // Rebuild the data region so pre-printed subject names or sample values can
-    // never show through the live report.
-    ctx.fillStyle="#ffffff";
-    ctx.fillRect(tableLeft-2,bodyTop+1,tableRight-tableLeft+4,1598-bodyTop);
-    if(logo){
-      const watermarkHeight=Math.min(390,Math.max(120,tableBottom-bodyTop-28));
-      ctx.save();ctx.globalAlpha=.065;
-      drawImageContain(ctx,logo,420,bodyTop+(tableBottom-bodyTop-watermarkHeight)/2,400,watermarkHeight);
-      ctx.restore();
-    }
+    if(logo){ctx.save();ctx.globalAlpha=.055;drawImageContain(ctx,logo,430,bodyTop+16,390,tableBottom-bodyTop-32);ctx.restore()}
 
-    const weightTotal=weights.reduce((sum,value)=>sum+value,0);
     let rowY=bodyTop;
     const ranks=manual?new Map():await reportSubjectPositionMap(report.id);
-
     ctx.strokeStyle="#1d1d1d";ctx.lineWidth=1.15;
-    ctx.beginPath();
-    columns.forEach(x=>{ctx.moveTo(x,bodyTop);ctx.lineTo(x,tableBottom)});
-    ctx.stroke();
+    ctx.beginPath();columns.forEach(x=>{ctx.moveTo(x,bodyTop);ctx.lineTo(x,tableBottom)});ctx.stroke();
     ctx.strokeRect(tableLeft,bodyTop,tableRight-tableLeft,tableBottom-bodyTop);
-
     displaySubjects.forEach((subject,index)=>{
-      const rowHeight=index===displaySubjects.length-1
-        ?tableBottom-rowY
-        :availableHeight*(weights[index]/weightTotal);
+      const rowHeight=index===displaySubjects.length-1?tableBottom-rowY:availableHeight*(weights[index]/weightTotal);
       const nextY=rowY+rowHeight;
-      ctx.strokeStyle="#1d1d1d";ctx.lineWidth=1;
       ctx.beginPath();ctx.moveTo(tableLeft,nextY);ctx.lineTo(tableRight,nextY);ctx.stroke();
       if(subject){
-        const breakdown=manual
-          ?{classScore:null,examScore:null,total:null}
-          :subjectScoreBreakdown(subject);
+        const breakdown=manual?{classScore:null,examScore:null,total:null}:subjectScoreBreakdown(subject);
         const score=value=>value===null||value===undefined?"":number(value,1);
-        drawReportWrappedCell(ctx,subject.subject_name||subject.name||"",columns[0],columns[1],rowY,nextY,{
-          preferredSize:20,minimumSize:13,maxLines:2,colour:ink
-        });
-        drawReportCellText(ctx,score(breakdown.classScore),columns[1],columns[2],(rowY+nextY)/2,{
-          align:"center",preferredSize:19,minimumSize:13,colour:REPORT_RESULT_COLOURS.score
-        });
-        drawReportCellText(ctx,score(breakdown.examScore),columns[2],columns[3],(rowY+nextY)/2,{
-          align:"center",preferredSize:19,minimumSize:13,colour:REPORT_RESULT_COLOURS.score
-        });
-        drawReportCellText(ctx,score(breakdown.total),columns[3],columns[4],(rowY+nextY)/2,{
-          align:"center",preferredSize:19,minimumSize:13,weight:"bold",colour:REPORT_RESULT_COLOURS.total
-        });
-        drawReportCellText(ctx,manual?"":subject.grade||"",columns[4],columns[5],(rowY+nextY)/2,{
-          align:"center",preferredSize:19,minimumSize:13,weight:"bold",colour:REPORT_RESULT_COLOURS.grade
-        });
-        drawReportCellText(ctx,manual?"":ranks.get(subject.subject_id)||"",columns[5],columns[6],(rowY+nextY)/2,{
-          align:"center",preferredSize:18,minimumSize:12,weight:"bold",colour:REPORT_RESULT_COLOURS.position
-        });
-        drawReportCellText(ctx,manual?"":subject.remark||"",columns[6],columns[7],(rowY+nextY)/2,{
-          preferredSize:18,minimumSize:11,colour:REPORT_RESULT_COLOURS.remark
-        });
+        drawReportWrappedCell(ctx,subject.subject_name||subject.name||"",columns[0],columns[1],rowY,nextY,{preferredSize:18,minimumSize:11,maxLines:2,colour:ink});
+        drawReportCellText(ctx,score(breakdown.classScore),columns[1],columns[2],(rowY+nextY)/2,{align:"center",preferredSize:17,minimumSize:11,colour:REPORT_RESULT_COLOURS.score});
+        drawReportCellText(ctx,score(breakdown.examScore),columns[2],columns[3],(rowY+nextY)/2,{align:"center",preferredSize:17,minimumSize:11,colour:REPORT_RESULT_COLOURS.score});
+        drawReportCellText(ctx,score(breakdown.total),columns[3],columns[4],(rowY+nextY)/2,{align:"center",preferredSize:17,minimumSize:11,weight:"bold",colour:REPORT_RESULT_COLOURS.total});
+        drawReportCellText(ctx,manual?"":subject.grade||"",columns[4],columns[5],(rowY+nextY)/2,{align:"center",preferredSize:17,minimumSize:11,weight:"bold",colour:REPORT_RESULT_COLOURS.grade});
+        drawReportCellText(ctx,manual?"":ranks.get(subject.subject_id)||"",columns[5],columns[6],(rowY+nextY)/2,{align:"center",preferredSize:16,minimumSize:10,weight:"bold",colour:REPORT_RESULT_COLOURS.position});
+        drawReportCellText(ctx,manual?"":subject.remark||"",columns[6],columns[7],(rowY+nextY)/2,{preferredSize:16,minimumSize:10,colour:REPORT_RESULT_COLOURS.remark});
       }
       rowY=nextY;
     });
 
-    // Rebuild the summary and signing area immediately after the final blank table row.
-    ctx.fillStyle=summaryPale;
-    ctx.fillRect(tableLeft,tableBottom,tableRight-tableLeft,109);
-    const average=manual?"":subjects.length
-      ?subjects.reduce((sum,item)=>sum+Number(item.total_score||0),0)/subjects.length
-      :0;
-    const position=manual
-      ?{position:0,class_size:0}
-      :report.id
-        ?await rpc("report_position",{target_report_id:report.id}).catch(()=>({position:0,class_size:0}))
-        :{position:0,class_size:0};
+    const average=manual?"":subjects.length?subjects.reduce((sum,item)=>sum+Number(item.total_score||0),0)/subjects.length:0;
+    const position=manual?{position:0,class_size:0}:report.id?await rpc("report_position",{target_report_id:report.id}).catch(()=>({position:0,class_size:0})):{position:0,class_size:0};
+    ctx.fillStyle=ink;setReportFont(ctx,18,"bold");
+    ctx.fillText(`Average: ${manual?"......":`${number(average,1)}%`}`,47,786);
+    drawCenteredReportText(ctx,`Attendance: ${manual?".... / ....":`${report.days_present||0} / ${report.days_school_opened||0}`}`,365,850,786);
+    drawRightReportText(ctx,`Overall Position: ${manual?"..../....":position.position?`${position.position} / ${position.class_size}`:".... / ...."}`,1194,786);
+    ctx.fillText(`Attitude: ${manual?".................................":report.attitude||""}`,47,842);
+    drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,842);
+    drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,842);
 
-    ctx.fillStyle=ink;setReportFont(ctx,20,"bold");
-    ctx.fillText(`Average: ${manual?"......":`${number(average,1)}%`}`,47,shift(1118));
-    drawCenteredReportText(ctx,`Attendance: ${manual?".... / ....":`${report.days_present||0} / ${report.days_school_opened||0}`}`,365,850,shift(1118));
-    drawRightReportText(ctx,`Overall Position: ${manual?"..../....":position.position?`${position.position} / ${position.class_size}`:".... / ...."}`,1194,shift(1118));
-    ctx.fillText(`Attitude: ${manual?".................................":report.attitude||""}`,47,shift(1175));
-    drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,shift(1175));
-    drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,shift(1175));
+    ctx.fillStyle=REPORT_COMMENT_COLOUR;setReportFont(ctx,18,"bold");ctx.fillText("Class Teacher's Comment",38,908);
+    [928,951].forEach(y=>drawReportDottedLine(ctx,38,710,y));
+    setReportFont(ctx,15,"normal");
+    if(!manual){const lines=reportTextLines(ctx,report.teacher_comment||"",650,2);[925,948].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],43,y)})}
+    setReportFont(ctx,18,"bold");ctx.fillText("Principal's Comment",38,980);
+    [1000,1024].forEach(y=>drawReportDottedLine(ctx,38,710,y));
+    setReportFont(ctx,15,"normal");
+    if(!manual){const lines=reportTextLines(ctx,report.head_comment||"",650,2);[997,1021].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],43,y)})}
 
-    ctx.fillStyle=REPORT_COMMENT_COLOUR;setReportFont(ctx,20,"bold");
-    ctx.fillText("Class Teacher's Comment",43,shift(1219));
-    [1249,1278,1307].forEach(y=>drawReportDottedLine(ctx,43,850,shift(y)));
-    setReportFont(ctx,17,"normal");ctx.fillStyle=REPORT_COMMENT_COLOUR;
-    if(!manual){
-      const teacherLines=reportTextLines(ctx,report.teacher_comment||"",790,3);
-      [1245,1274,1303].forEach((y,index)=>{if(teacherLines[index])ctx.fillText(teacherLines[index],47,shift(y))});
-    }
-
-    setReportFont(ctx,20,"bold");ctx.fillStyle=REPORT_COMMENT_COLOUR;ctx.fillText("Principal's Comment",43,shift(1327));
-    [1357,1386].forEach(y=>drawReportDottedLine(ctx,43,650,shift(y)));
-    setReportFont(ctx,17,"normal");ctx.fillStyle=REPORT_COMMENT_COLOUR;
-    if(!manual){
-      const principalLines=reportTextLines(ctx,report.head_comment||"",590,2);
-      [1353,1382].forEach((y,index)=>{if(principalLines[index])ctx.fillText(principalLines[index],47,shift(y))});
-    }
-    ctx.fillStyle=ink;
-
-    const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
-    setReportFont(ctx,20,"bold");
-    ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,shift(1422));
-    setReportFont(ctx,17,"bold");ctx.fillStyle=ink;
-    ctx.fillText(`Next Term Reopens: ${reportNextTermReopeningText(report,student,manual)}`,43,shift(1460));
+    ctx.fillStyle=ink;const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
+    setReportFont(ctx,18,"bold");ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,38,1056);
+    setReportFont(ctx,16,"bold");ctx.fillText(`Next Term Reopens: ${reportNextTermReopeningText(report,student,manual)}`,38,1125);
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
-    const qr=await qrCanvas(qrText);
-    if(qr)ctx.drawImage(qr,949,shift(1210),190,190);
-
+    const qr=await qrCanvas(qrText);if(qr)ctx.drawImage(qr,1015,888,145,145);
     const verificationCode=reportVerificationCode(report,templateMeta,manual);
-    ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
+    ctx.fillStyle="#5f708b";setReportFont(ctx,15,"normal");
     const verificationText=`Verification: ${verificationCode}`;
-    if(ctx.measureText(verificationText).width<=290){
-      drawCenteredReportText(ctx,verificationText,900,1190,shift(1430));
-    }else{
-      const splitAt=verificationCode.lastIndexOf("-");
-      const first=splitAt>0?`Verification: ${verificationCode.slice(0,splitAt+1)}`:"Verification:";
-      const second=splitAt>0?verificationCode.slice(splitAt+1):verificationCode;
-      drawCenteredReportText(ctx,first,900,1190,shift(1424));
-      drawCenteredReportText(ctx,second,900,1190,shift(1447));
-    }
+    if(ctx.measureText(verificationText).width<=280)drawCenteredReportText(ctx,verificationText,960,1202,1082);
+    else{const splitAt=verificationCode.lastIndexOf("-");drawCenteredReportText(ctx,splitAt>0?`Verification: ${verificationCode.slice(0,splitAt+1)}`:"Verification:",950,1202,1072);drawCenteredReportText(ctx,splitAt>0?verificationCode.slice(splitAt+1):verificationCode,950,1202,1093)}
 
-    const signatureLeft=515,signatureRight=865,signatureLineY=shift(1485);
-    drawSignatureOnLine(ctx,signatureImage,signatureLeft,signatureRight,signatureLineY,100,"#5f708b",1.2);
-    ctx.fillStyle=ink;setReportFont(ctx,18,"bold");
-    drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,shift(1512));
-    ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
-    drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,shift(1538));
+    const signatureLeft=455,signatureRight=780,signatureLineY=1122;
+    drawSignatureOnLine(ctx,signatureImage,signatureLeft,signatureRight,signatureLineY,92,"#5f708b",1.2);
+    ctx.fillStyle=ink;setReportFont(ctx,17,"bold");drawCenteredReportText(ctx,signer.full_name||school.head_name||"Principal",signatureLeft,signatureRight,1152);
+    ctx.fillStyle="#5f708b";setReportFont(ctx,15,"normal");drawCenteredReportText(ctx,"Digitally signed by the Principal",signatureLeft,signatureRight,1177);
 
     const reportCode=reportVerificationCode(report,templateMeta,manual);
-    ctx.fillStyle="#5f708b";setReportFont(ctx,16,"normal");
-    ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,43,shift(1572));
+    ctx.fillStyle="#5f708b";setReportFont(ctx,14,"normal");ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,38,1218);
     const manualYear=(String(templateMeta.academicYearName||"").match(/\d{4}\s*$/)||[])[0]||String(new Date().getFullYear());
-    drawRightReportText(ctx,manual
-      ?`Date Issued: .../.../${manualYear}`
-      :`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1197,shift(1572));
-
+    drawRightReportText(ctx,manual?`Date Issued: .../.../${manualYear}`:`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1200,1218);
     return canvas;
   }
 
@@ -4771,7 +4709,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.1.5 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5035,7 +4973,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.1.5 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.0 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5066,7 +5004,7 @@
   }
 
 
-  // Report Card Enterprise v7.1.5 certificate watermark and signature alignment reliability
+  // Report Card Enterprise v7.2.0 final approved terminal-report template reliability
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5420,7 +5358,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.1.5 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.0 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }

@@ -1,7 +1,7 @@
-const CACHE_NAME = "nis-report-card-v7-1-5-reusable-r1";
+const CACHE_NAME = "nis-report-card-v7-2-0-reusable-r1";
 const STATIC_ASSETS = [
   "./","index.html","style.css","app.js","config.js","manifest.webmanifest",
-  "assets/nipe-school-logo.png","assets/approved-terminal-report-template.png",
+  "assets/nipe-school-logo.png","assets/approved-terminal-report-template.png","assets/approved-terminal-report-template.pdf",
   "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",
   "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",
   "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",
