@@ -3033,8 +3033,9 @@
   async function renderCertificatePdfTemplateBlob(blob) {
     if(!window.pdfjsLib?.getDocument)throw new Error("PDF certificate-template rendering service is unavailable. Reload and try again.");
     window.pdfjsLib.GlobalWorkerOptions.workerSrc="assets/vendor/pdfjs-3.11.174.worker.min.js";
-    const documentTask=window.pdfjsLib.getDocument({data:new Uint8Array(await blob.arrayBuffer())});
-    const pdf=await documentTask.promise;
+    const bytes=new Uint8Array(await blob.arrayBuffer());let pdf;
+    try{pdf=await window.pdfjsLib.getDocument({data:bytes.slice()}).promise}
+    catch(workerError){try{pdf=await window.pdfjsLib.getDocument({data:bytes.slice(),disableWorker:true}).promise}catch(renderError){throw new Error("The certificate PDF template could not be rendered.",{cause:renderError||workerError})}}
     if(pdf.numPages<1)throw new Error("The certificate PDF template has no pages.");
     const page=await pdf.getPage(1),base=page.getViewport({scale:1});
     const scale=Math.min(1754/base.width,1240/base.height)*2;
@@ -3064,6 +3065,17 @@
     }finally{host.remove()}
   }
 
+  function resolveCertificateTemplateMimeType(template,blob) {
+    const configured=String(template?.mime_type||"").toLowerCase();
+    if(configured==="application/pdf"||configured==="application/vnd.openxmlformats-officedocument.wordprocessingml.document")return configured;
+    const blobType=String(blob?.type||"").toLowerCase();
+    if(blobType==="application/pdf"||blobType==="application/vnd.openxmlformats-officedocument.wordprocessingml.document")return blobType;
+    const name=String(template?.original_name||template?.storage_path||"").toLowerCase().split("?")[0];
+    if(name.endsWith(".pdf"))return "application/pdf";
+    if(name.endsWith(".docx"))return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    throw new Error("The certificate-template file format could not be identified.");
+  }
+
   async function renderCertificateTemplateBlob(blob,mimeType) {
     if(mimeType==="application/pdf")return renderCertificatePdfTemplateBlob(blob);
     if(mimeType==="application/vnd.openxmlformats-officedocument.wordprocessingml.document")return renderCertificateDocxTemplateBlob(blob);
@@ -3072,11 +3084,13 @@
 
   async function storedCertificateTemplateCanvas(template) {
     if(!template?.storage_path)return null;
-    const cacheKey=`${template.storage_path}:${template.checksum||template.updated_at||""}`;
+    const cacheKey=`${template.storage_path}:${template.checksum||template.updated_at||template.version||""}`;
     if(state.certificateTemplateCanvases.has(cacheKey))return state.certificateTemplateCanvases.get(cacheKey);
     const {data,error}=await state.client.storage.from(CONFIG.certificateTemplateBucket).download(template.storage_path);
     if(error)throw new Error("The uploaded certificate template could not be downloaded.",{cause:error});
-    const canvas=await renderCertificateTemplateBlob(data,template.mime_type);
+    if(!data||data.size<=0)throw new Error("The uploaded certificate template is empty.");
+    const mimeType=resolveCertificateTemplateMimeType(template,data);
+    const canvas=await renderCertificateTemplateBlob(data,mimeType);
     state.certificateTemplateCanvases.set(cacheKey,canvas);
     return canvas;
   }
@@ -3685,6 +3699,17 @@
     for(let i=1;i<=5;i++)add(`${String(offsets[i]).padStart(10,"0")} 00000 n \n`);
     add(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);
     return new Blob(parts,{type:"application/pdf"});
+  }
+
+
+  async function imagesPdf(jpegBlobs,pageWidth,pageHeight,imageWidth=1240,imageHeight=1754) {
+    if(!jpegBlobs?.length)throw new Error("At least one rendered PDF page is required");
+    const images=[];for(const blob of jpegBlobs)images.push(new Uint8Array(await blob.arrayBuffer()));
+    const parts=[],offsets=[0];let length=0;const add=value=>{const bytes=typeof value==="string"?new TextEncoder().encode(value):value;parts.push(bytes);length+=bytes.length};
+    add("%PDF-1.4\n%\xFF\xFF\xFF\xFF\n");const object=(id,body)=>{offsets[id]=length;add(`${id} 0 obj\n${body}\nendobj\n`)};
+    object(1,"<< /Type /Catalog /Pages 2 0 R >>");const pageIds=images.map((_,index)=>3+index*3);object(2,`<< /Type /Pages /Kids [${pageIds.map(id=>`${id} 0 R`).join(" ")}] /Count ${pageIds.length} >>`);
+    images.forEach((jpeg,index)=>{const pageId=3+index*3,imageId=pageId+1,contentId=pageId+2,name=`Im${index}`;object(pageId,`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /${name} ${imageId} 0 R >> >> /Contents ${contentId} 0 R >>`);offsets[imageId]=length;add(`${imageId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);add(jpeg);add("\nendstream\nendobj\n");const content=`q\n${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/${name} Do\nQ`;object(contentId,`<< /Length ${content.length} >>\nstream\n${content}\nendstream`) });
+    const totalObjects=2+images.length*3,xref=length;add(`xref\n0 ${totalObjects+1}\n0000000000 65535 f \n`);for(let i=1;i<=totalObjects;i++)add(`${String(offsets[i]).padStart(10,"0")} 00000 n \n`);add(`trailer\n<< /Size ${totalObjects+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`);return new Blob(parts,{type:"application/pdf"});
   }
 
 
@@ -4718,7 +4743,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.1.3 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.1.4 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4848,7 +4873,7 @@
       <section class="panel pad"><div class="form-grid"><label class="field"><span>Find student</span><input id="historySearch" type="search" placeholder="Search name or admission number"></label><label class="field"><span>Student</span><select id="historyStudent">${optionList(filtered.map(item=>({...item,label:`${item.full_name||fullName(item)} • ${item.admission_no}`})),"id","label",state.historyStudentId,filtered.length?"Select student":"No accessible students")}</select></label></div></section>
       ${data.error?`<section class="panel pad">${emptyState("Academic history unavailable",data.error)}</section>`:student.id?`
       <div class="grid two maturity-grid" style="margin-top:18px">
-        <section class="panel pad transcript-profile"><div class="section-title"><h4>${esc(student.full_name)}</h4><span class="status ${student.status==="active"?"published":"draft"}">${esc(statusText(student.status))}</span></div><div class="metric-row wrap">${maturityMetric("Admission number",student.admission_no)}${maturityMetric("Academic periods",number(records.length))}${maturityMetric("Transcript issuances",number(issuances.length))}</div><div class="button-row" style="margin-top:15px"><button class="button outline" id="transcriptPrint">Print cumulative record</button><button class="button ghost" id="transcriptCsv">Export CSV</button></div></section>
+        <section class="panel pad transcript-profile"><div class="section-title"><h4>${esc(student.full_name)}</h4><span class="status ${student.status==="active"?"published":"draft"}">${esc(statusText(student.status))}</span></div><div class="metric-row wrap">${maturityMetric("Admission number",student.admission_no)}${maturityMetric("Academic periods",number(records.length))}${maturityMetric("Transcript issuances",number(issuances.length))}</div><div class="button-row" style="margin-top:15px"><button class="button outline" id="transcriptPrint">Download transcript PDF</button><button class="button ghost" id="transcriptCsv">Export CSV</button></div></section>
         <section class="panel pad"><div class="section-title"><h4>Lifecycle</h4></div>${lifecycle.length?`<div class="timeline">${lifecycle.map(item=>`<div class="timeline-item"><span class="timeline-dot"></span><div class="timeline-copy"><strong>${esc(statusText(item.event_type))}</strong><small>${isoDate(item.effective_date)} • ${esc(item.from_class_name||"—")} ${item.to_class_name?`→ ${esc(item.to_class_name)}`:""}${item.destination_school?` • ${esc(item.destination_school)}`:""}<br>${esc(item.reason)}</small></div></div>`).join("")}</div>`:`<p class="help-text">No transfer, withdrawal, graduation, or reactivation event recorded.</p>`}</section>
       </div>
       <section class="panel" style="margin-top:18px"><div class="panel-header"><div><h3>Cumulative academic record</h3><p>Approved, published, and historically withdrawn report versions</p></div></div>${records.length?records.map(record=>academicRecordHtml(record)).join(""):emptyState("No cumulative academic record")}</section>
@@ -4857,7 +4882,7 @@
     byId("historySearch").oninput=()=>{const q=byId("historySearch").value.toLowerCase();$$('#historyStudent option').forEach(option=>{if(!option.value)return;option.hidden=!option.textContent.toLowerCase().includes(q)})};
     byId("transcriptIssue")?.addEventListener("click",issueTranscript);
     byId("lifecycleAdd")?.addEventListener("click",recordLifecycleEvent);
-    byId("transcriptPrint")?.addEventListener("click",()=>printTranscript(transcript));
+    byId("transcriptPrint")?.addEventListener("click",()=>downloadTranscriptPdf(transcript,issuances));
     byId("transcriptCsv")?.addEventListener("click",()=>exportTranscriptCsv(transcript));
     $$('[data-transcript-copy]').forEach(button=>button.onclick=()=>copyTranscriptLink(button.dataset.transcriptCopy));
     $$('[data-transcript-revoke]').forEach(button=>button.onclick=()=>revokeTranscript(button.dataset.transcriptRevoke));
@@ -4866,7 +4891,83 @@
   async function issueTranscript(){modal("Issue official transcript","A new issuance supersedes any currently valid transcript for this student.",`<label class="field"><span>Purpose</span><input id="transcriptPurpose" value="Academic transcript"></label>`,`<button class="button ghost" id="transcriptCancel">Cancel</button><button class="button primary" id="transcriptConfirm">Issue transcript</button>`,"small");byId("transcriptCancel").onclick=closeModal;byId("transcriptConfirm").onclick=async()=>{const button=byId("transcriptConfirm");button.disabled=true;try{const result=await rpc("issue_student_transcript",{target_student_id:state.historyStudentId,purpose_text:byId("transcriptPurpose").value.trim()});closeModal();toast("Transcript issued",`Verification token: ${result.verification_token}`);state.historyData=null;await renderAcademicHistory(state.viewToken,true)}catch(error){toast("Transcript not issued",friendlyError(error),"error")}finally{button.disabled=false}}}
   async function revokeTranscript(id){const reason=window.prompt("Enter the reason for revoking this transcript:","")||"";if(reason.trim().length<5)return;try{await rpc("revoke_student_transcript",{target_issuance_id:id,reason_text:reason.trim()});toast("Transcript revoked");state.historyData=null;await renderAcademicHistory(state.viewToken,true)}catch(error){toast("Transcript not revoked",friendlyError(error),"error")}}
   function copyTranscriptLink(token){const base=(state.boot.school?.verification_base_url||location.href.split("?")[0]).replace(/\?+$/,'');const url=`${base}?transcript=${encodeURIComponent(token)}`;navigator.clipboard?.writeText(url).then(()=>toast("Verification link copied")).catch(()=>window.prompt("Copy verification link:",url))}
-  function printTranscript(snapshot){const win=window.open("","_blank","noopener,noreferrer");if(!win){toast("Print window blocked","Allow pop-ups to print the transcript.","warning");return}const student=snapshot.student||{},school=snapshot.school||{};win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(student.full_name)} Transcript</title><style>body{font-family:Arial,sans-serif;margin:32px;color:#13213c}h1,h2{text-align:center}table{width:100%;border-collapse:collapse;margin:18px 0}th,td{border:1px solid #aab4c5;padding:7px;text-align:left}.period{page-break-inside:avoid;margin-top:22px}small{color:#516078}</style></head><body><h1>${esc(school.school_name||schoolDisplayName())}</h1><h2>Cumulative Academic Transcript</h2><p><strong>Student:</strong> ${esc(student.full_name)}<br><strong>Admission No.:</strong> ${esc(student.admission_no)}<br><strong>Status:</strong> ${esc(statusText(student.status))}</p>${(snapshot.academic_records||[]).map(record=>`<section class="period"><h3>${esc(record.academic_year_name)} • ${esc(record.term_name)} • ${esc(record.class_name)}</h3><table><thead><tr><th>Subject</th><th>Score</th><th>Grade</th><th>Remark</th></tr></thead><tbody>${(record.subjects||[]).map(subject=>`<tr><td>${esc(subject.subject_name)}</td><td>${number(subject.total_score,1)}</td><td>${esc(subject.grade||"—")}</td><td>${esc(subject.remark||"")}</td></tr>`).join("")}</tbody></table><small>Attendance: ${number(record.days_present)} of ${number(record.days_school_opened)} days • Average: ${number(record.average,1)}%</small></section>`).join("")}</body></html>`);win.document.close();setTimeout(()=>win.print(),250)}
+  function transcriptTextLines(ctx,text,maxWidth) {
+    const words=String(text||"").replace(/\s+/g," ").trim().split(" ").filter(Boolean),lines=[];let line="";
+    for(const word of words){const candidate=line?`${line} ${word}`:word;if(line&&ctx.measureText(candidate).width>maxWidth){lines.push(line);line=word}else line=candidate}
+    if(line)lines.push(line);return lines;
+  }
+
+  function transcriptPageCanvas(school,pageNumber) {
+    const canvas=document.createElement("canvas");canvas.width=1240;canvas.height=1754;
+    const ctx=canvas.getContext("2d"),navy=school.primary_colour||"#0a2f73",gold=school.accent_colour||"#f1b51c";
+    ctx.fillStyle="#ffffff";ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle=navy;ctx.fillRect(0,0,canvas.width,154);
+    ctx.fillStyle=gold;ctx.fillRect(0,154,canvas.width,8);
+    ctx.textAlign="center";ctx.fillStyle="#ffffff";ctx.font='bold 34px Georgia, "Times New Roman", serif';ctx.fillText(String(school.school_name||schoolDisplayName()).toUpperCase(),620,64);
+    ctx.font='18px Arial, sans-serif';ctx.fillText(school.address||school.motto||"",620,98);
+    ctx.font='bold 27px Arial, sans-serif';ctx.fillText("CUMULATIVE ACADEMIC TRANSCRIPT",620,137);
+    ctx.textAlign="left";ctx.fillStyle="#56647a";ctx.font='15px Arial, sans-serif';ctx.fillText(`Page ${pageNumber}`,1080,1718);
+    return {canvas,ctx,navy,gold,y:205};
+  }
+
+  async function createTranscriptPdf(snapshot,issuances=[]) {
+    const student=snapshot?.student||{},school=snapshot?.school||state.boot?.school||{},records=snapshot?.academic_records||[],lifecycle=snapshot?.lifecycle||[];
+    const pages=[];let page=transcriptPageCanvas(school,1),ctx=page.ctx,y=page.y;
+    const margin=64,contentWidth=1112,navy=page.navy,gold=page.gold;
+    const newPage=()=>{pages.push(page);page=transcriptPageCanvas(school,pages.length+1);ctx=page.ctx;y=page.y};
+    const requireSpace=height=>{if(y+height>1645)newPage()};
+    let logo=null;try{logo=await loadImage(schoolDisplayLogo(school))}catch(_){}
+    if(logo)drawImageContain(ctx,logo,72,22,112,112);
+    const currentIssuance=issuances.find(item=>item.status==="valid")||issuances.find(item=>item.status!=="revoked")||null;
+    let qr=null;if(currentIssuance?.verification_token){try{qr=await qrCanvas((state.boot.school?.verification_base_url||location.href.split("?")[0]).replace(/\?+$/,'')+`?transcript=${encodeURIComponent(currentIssuance.verification_token)}`)}catch(_){}}
+
+    ctx.fillStyle="#f5f8fc";ctx.strokeStyle="#cfd8e6";ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(margin,y,contentWidth,190,18);ctx.fill();ctx.stroke();
+    ctx.fillStyle=navy;ctx.font='bold 30px Georgia, "Times New Roman", serif';ctx.fillText(student.full_name||"Student",90,y+47);
+    ctx.fillStyle="#26354d";ctx.font='18px Arial, sans-serif';
+    const detailRows=[
+      ["Admission number",student.admission_no||"-"],["Student status",statusText(student.status||"active")],
+      ["Academic periods",String(records.length)],["Transcript issued",currentIssuance?isoDateTime(currentIssuance.issued_at):"Not issued"]
+    ];
+    detailRows.forEach((row,index)=>{const col=index%2,rowNo=Math.floor(index/2),x=90+col*445,yy=y+88+rowNo*42;ctx.fillStyle="#61718a";ctx.font='14px Arial, sans-serif';ctx.fillText(row[0].toUpperCase(),x,yy);ctx.fillStyle="#15233b";ctx.font='bold 18px Arial, sans-serif';ctx.fillText(String(row[1]),x,yy+23)});
+    if(qr){ctx.drawImage(qr,1000,y+22,142,142);ctx.fillStyle="#61718a";ctx.font='13px Arial, sans-serif';ctx.textAlign="center";ctx.fillText("SCAN TO VERIFY",1071,y+177);ctx.textAlign="left"}
+    y+=220;
+
+    if(!records.length){
+      requireSpace(210);ctx.fillStyle="#f8fafc";ctx.strokeStyle="#d8e0eb";ctx.beginPath();ctx.roundRect(margin,y,contentWidth,185,16);ctx.fill();ctx.stroke();ctx.textAlign="center";ctx.fillStyle=navy;ctx.font='bold 25px Arial, sans-serif';ctx.fillText("No cumulative academic record available",620,y+76);ctx.fillStyle="#64748b";ctx.font='18px Arial, sans-serif';ctx.fillText("Approved, published, or historically retained reports will appear here.",620,y+116);ctx.textAlign="left";y+=215;
+    }
+
+    for(const record of records){
+      const subjects=record.subjects||[],estimated=138+Math.max(1,subjects.length)*48+58;requireSpace(Math.min(estimated,620));
+      ctx.fillStyle=navy;ctx.beginPath();ctx.roundRect(margin,y,contentWidth,58,12);ctx.fill();ctx.fillStyle="#ffffff";ctx.font='bold 21px Arial, sans-serif';ctx.fillText(`${record.academic_year_name||""}  |  ${record.term_name||""}  |  ${record.class_name||""}`,84,y+36);y+=72;
+      ctx.fillStyle="#edf2f8";ctx.strokeStyle="#cbd5e1";ctx.lineWidth=1;ctx.fillRect(margin,y,contentWidth,42);ctx.strokeRect(margin,y,contentWidth,42);
+      const cols=[margin,margin+545,margin+690,margin+825,margin+contentWidth];
+      ["SUBJECT","SCORE","GRADE","REMARK"].forEach((label,index)=>{ctx.fillStyle="#27364d";ctx.font='bold 15px Arial, sans-serif';ctx.fillText(label,cols[index]+12,y+27)});y+=42;
+      if(!subjects.length){ctx.strokeStyle="#d8e0eb";ctx.strokeRect(margin,y,contentWidth,50);ctx.fillStyle="#66758b";ctx.font='17px Arial, sans-serif';ctx.fillText("No subject results recorded",margin+14,y+31);y+=50}
+      for(const subject of subjects){
+        const subjectLines=transcriptTextLines(ctx,subject.subject_name||"",515),remarkLines=transcriptTextLines(ctx,subject.remark||"",270),lines=Math.max(1,subjectLines.length,remarkLines.length),rowHeight=Math.max(46,lines*21+16);
+        if(y+rowHeight+75>1645){newPage();ctx.fillStyle="#edf2f8";ctx.strokeStyle="#cbd5e1";ctx.fillRect(margin,y,contentWidth,42);ctx.strokeRect(margin,y,contentWidth,42);["SUBJECT","SCORE","GRADE","REMARK"].forEach((label,index)=>{ctx.fillStyle="#27364d";ctx.font='bold 15px Arial, sans-serif';ctx.fillText(label,cols[index]+12,y+27)});y+=42}
+        ctx.strokeStyle="#d8e0eb";ctx.strokeRect(margin,y,contentWidth,rowHeight);[cols[1],cols[2],cols[3]].forEach(x=>{ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x,y+rowHeight);ctx.stroke()});
+        ctx.fillStyle="#1e293b";ctx.font='16px Arial, sans-serif';subjectLines.forEach((line,index)=>ctx.fillText(line,cols[0]+12,y+27+index*21));
+        ctx.textAlign="center";ctx.font='bold 16px Arial, sans-serif';ctx.fillText(number(subject.total_score,1),cols[1]+72,y+28);ctx.fillText(subject.grade||"-",cols[2]+67,y+28);ctx.textAlign="left";ctx.font='15px Arial, sans-serif';remarkLines.forEach((line,index)=>ctx.fillText(line,cols[3]+12,y+27+index*21));y+=rowHeight;
+      }
+      const opened=Number(record.days_school_opened||0),present=Number(record.days_present||0),attendance=opened?Math.round(present/opened*100):0;
+      ctx.fillStyle="#f8fafc";ctx.strokeStyle="#d8e0eb";ctx.fillRect(margin,y,contentWidth,48);ctx.strokeRect(margin,y,contentWidth,48);ctx.fillStyle=navy;ctx.font='bold 16px Arial, sans-serif';ctx.fillText(`TERM AVERAGE: ${number(record.average,1)}%`,margin+14,y+30);ctx.fillText(`ATTENDANCE: ${present} / ${opened} DAYS (${attendance}%)`,margin+370,y+30);ctx.fillStyle="#53657d";ctx.font='15px Arial, sans-serif';ctx.textAlign="right";ctx.fillText(`REPORT: ${record.report_number||"-"}`,margin+contentWidth-14,y+30);ctx.textAlign="left";y+=76;
+    }
+
+    if(lifecycle.length){requireSpace(105+lifecycle.length*38);ctx.fillStyle=navy;ctx.font='bold 21px Arial, sans-serif';ctx.fillText("STUDENT LIFECYCLE HISTORY",margin,y+15);y+=34;for(const item of lifecycle){requireSpace(42);ctx.fillStyle="#f8fafc";ctx.strokeStyle="#d8e0eb";ctx.fillRect(margin,y,contentWidth,36);ctx.strokeRect(margin,y,contentWidth,36);ctx.fillStyle="#26354d";ctx.font='15px Arial, sans-serif';ctx.fillText(`${isoDate(item.effective_date)}  |  ${statusText(item.event_type)}  |  ${item.from_class_name||"-"}${item.to_class_name?` -> ${item.to_class_name}`:""}`,margin+12,y+24);y+=38}}
+
+    pages.push(page);
+    for(let index=0;index<pages.length;index++){
+      const item=pages[index],footerY=1684;item.ctx.fillStyle=navy;item.ctx.fillRect(64,footerY-22,1112,2);item.ctx.fillStyle="#53657d";item.ctx.font='14px Arial, sans-serif';item.ctx.textAlign="left";item.ctx.fillText(`Generated ${isoDateTime(new Date())}`,70,footerY);item.ctx.textAlign="center";item.ctx.fillText(currentIssuance?.verification_token?`Verification: ${currentIssuance.verification_token}`:"Unissued cumulative record",620,footerY);item.ctx.textAlign="right";item.ctx.fillText(`Page ${index+1} of ${pages.length}`,1170,footerY);item.ctx.textAlign="left";
+    }
+    const images=[];for(const item of pages){const jpeg=await new Promise((resolve,reject)=>item.canvas.toBlob(blob=>blob?resolve(blob):reject(new Error("Transcript page could not be rendered")),"image/jpeg",.96));images.push(jpeg)}
+    return imagesPdf(images,595.28,841.89,1240,1754);
+  }
+
+  async function downloadTranscriptPdf(snapshot,issuances=[]) {
+    setLoading(true);try{const student=snapshot?.student||{},pdf=await createTranscriptPdf(snapshot,issuances);downloadBlob(`${safeArchiveSegment(student.full_name||"Student","Student")}_Cumulative_Transcript.pdf`,pdf);toast("Transcript PDF downloaded",`${student.full_name||"Student"}'s cumulative transcript was prepared successfully.`)}catch(error){toast("Transcript PDF not created",friendlyError(error),"error",8000);await reportClientError(error,{source:"transcript_pdf",student_id:snapshot?.student?.id||state.historyStudentId})}finally{setLoading(false)}
+  }
+
   function exportTranscriptCsv(snapshot){const student=snapshot.student||{},headers=["academic_year","term","class","subject","score","grade","remark","days_present","days_opened","report_number"];const rows=[];(snapshot.academic_records||[]).forEach(record=>(record.subjects||[]).forEach(subject=>rows.push([record.academic_year_name,record.term_name,record.class_name,subject.subject_name,subject.total_score,subject.grade,subject.remark,record.days_present,record.days_school_opened,record.report_number])));downloadText(`${slugify(student.full_name||"student")}-transcript.csv`,[headers.join(","),...rows.map(row=>row.map(csvCell).join(","))].join("\n"),"text/csv")}
   function recordLifecycleEvent(){const classes=state.boot.classes||[];modal("Record student lifecycle event","Transfer, withdrawal, graduation, inactivity, or reactivation is preserved as immutable history.",`<form id="lifecycleForm" class="form-grid"><label class="field"><span>Event</span><select name="event_type">${["transfer_in","transfer_out","withdrawn","graduated","inactive","reactivated","archived"].map(value=>`<option value="${value}">${esc(statusText(value))}</option>`).join("")}</select></label><label class="field"><span>Effective date</span><input type="date" name="effective_date" value="${localDateValue()}"></label><label class="field"><span>Destination or new class</span><select name="to_class_id">${optionList(classes,"id","name","","Not applicable")}</select></label><label class="field"><span>Destination school</span><input name="destination_school"></label><label class="field full"><span>Reference</span><input name="reference"></label><label class="field full"><span>Reason</span><textarea name="reason" required></textarea></label></form>`,`<button class="button ghost" id="lifecycleCancel">Cancel</button><button class="button primary" id="lifecycleSave">Save event</button>`,"small");byId("lifecycleCancel").onclick=closeModal;byId("lifecycleSave").onclick=async()=>{const form=byId("lifecycleForm"),values=formObject(form);if(values.reason.trim().length<5){toast("Reason required","Provide at least five characters.","error");return}const button=byId("lifecycleSave");button.disabled=true;try{await rpc("record_student_lifecycle_event",{payload:{student_id:state.historyStudentId,...values}});closeModal();toast("Lifecycle event recorded");state.historyData=null;state.workspace=null;await renderAcademicHistory(state.viewToken,true)}catch(error){toast("Lifecycle event not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
 
@@ -4906,7 +5007,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.1.3 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.1.4 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -4937,7 +5038,7 @@
   }
 
 
-  // Report Card Enterprise v7.1.3 certificate batch reliability and responsive recipient layout
+  // Report Card Enterprise v7.1.4 certificate PDF fallback, permanent deletion, and transcript PDF reliability
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5108,7 +5209,7 @@
     const actions=role()==="system_admin"&&["draft","rejected"].includes(b.status)?`<button class="button primary" id="certificateSubmitBatch" type="button">Submit for Principal approval</button>`:role()==="principal"&&b.status==="submitted"?`<button class="button warning" id="certificateRejectBatch" type="button">Reject</button><button class="button primary" id="certificateApproveBatch" type="button">Approve all</button>`:role()==="system_admin"&&b.status==="approved"?`<button class="button primary" id="certificateIssueBatch" type="button">Issue all and create PDFs</button>`:b.status==="issued"?`<button class="button secondary" id="certificateDownloadBatch" type="button">${role()==="system_admin"?"Refresh PDFs and download ZIP":"Download available PDFs"}</button>`:"";
     modal(b.title,`${b.type_label} • ${b.academic_year_name}${b.term_name?` • ${b.term_name}`:""}${b.class_name?` • ${b.class_name}`:""}`,`
       <div class="grid two"><section class="panel pad"><h4>Workflow</h4><div class="verify-result">${verifyField("Status",b.status)}${verifyField("Prepared by",b.prepared_by_name)}${verifyField("Submitted",isoDateTime(b.submitted_at))}${verifyField("Approved by",b.approved_by_name)}${verifyField("Issued",isoDateTime(b.issued_at))}</div>${b.review_note?`<p class="help-text"><strong>Review note:</strong> ${esc(b.review_note)}</p>`:""}</section><section class="panel pad"><h4>Eligibility and statement</h4><p>${esc(data.template?.statement_template||"")}</p>${b.award_category_name?`<p><strong>Award:</strong> ${esc(b.award_category_name)}</p>`:""}${b.custom_citation?`<p><strong>Citation:</strong> ${esc(b.custom_citation)}</p>`:""}</section></div>
-      <section class="panel" style="margin-top:16px"><div class="panel-header"><div><h4>Recipients</h4><p>${certs.length} certificate record${certs.length===1?"":"s"}</p></div></div><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Purpose</th><th>Certificate</th><th>PDF</th><th>Actions</th></tr></thead><tbody>${certs.map(cert=>`<tr><td><strong>${esc(cert.recipient_name)}</strong><br><small>${esc(cert.recipient_identifier||"")}${cert.current_class_name?` • ${esc(cert.current_class_name)}`:""}</small></td><td>${cert.award_category_name?esc(cert.award_category_name):cert.destination_class_name?`${esc(cert.current_class_name)} → ${esc(cert.destination_class_name)}`:esc(certificateTypeLabel(b.certificate_type))}<br><small>Revision ${number(cert.revision_no)}</small></td><td>${cert.certificate_number?`<code>${esc(cert.certificate_number)}</code><br>`:""}${certificateStatusBadge(cert.status)}</td><td>${cert.pdf_storage_path?`Ready<br><small>${esc(cert.pdf_sha256?.slice(0,12)||"")}…</small>`:"Not created"}</td><td><div class="button-row compact">${cert.status==="issued"&&role()==="system_admin"?`<button class="button secondary small" data-cert-generate="${attr(cert.id)}">Create / refresh PDF</button>`:""}${cert.status==="issued"&&cert.pdf_storage_path?`<button class="button ghost small" data-cert-download="${attr(cert.id)}">Download</button>`:""}${cert.verification_token?`<button class="button ghost small" data-cert-copy="${attr(cert.verification_token)}">Copy verification</button>`:""}${cert.status==="issued"&&["system_admin","principal"].includes(role())?`<button class="button warning small" data-cert-revoke="${attr(cert.id)}">Revoke</button>`:""}${["issued","revoked"].includes(cert.status)&&role()==="system_admin"?`<button class="button ghost small" data-cert-replace="${attr(cert.id)}">Replacement</button>`:""}</div></td></tr>`).join("")}</tbody></table></div></section>
+      <section class="panel" style="margin-top:16px"><div class="panel-header"><div><h4>Recipients</h4><p>${certs.length} certificate record${certs.length===1?"":"s"}</p></div></div><div class="table-wrap"><table><thead><tr><th>Recipient</th><th>Purpose</th><th>Certificate</th><th>PDF</th><th>Actions</th></tr></thead><tbody>${certs.map(cert=>`<tr><td><strong>${esc(cert.recipient_name)}</strong><br><small>${esc(cert.recipient_identifier||"")}${cert.current_class_name?` • ${esc(cert.current_class_name)}`:""}</small></td><td>${cert.award_category_name?esc(cert.award_category_name):cert.destination_class_name?`${esc(cert.current_class_name)} → ${esc(cert.destination_class_name)}`:esc(certificateTypeLabel(b.certificate_type))}<br><small>Revision ${number(cert.revision_no)}</small></td><td>${cert.certificate_number?`<code>${esc(cert.certificate_number)}</code><br>`:""}${certificateStatusBadge(cert.status)}</td><td>${cert.pdf_storage_path?`Ready<br><small>${esc(cert.pdf_sha256?.slice(0,12)||"")}…</small>`:"Not created"}</td><td><div class="button-row compact">${cert.status==="issued"&&role()==="system_admin"?`<button class="button secondary small" data-cert-generate="${attr(cert.id)}">Create / refresh PDF</button>`:""}${cert.status==="issued"&&cert.pdf_storage_path?`<button class="button ghost small" data-cert-download="${attr(cert.id)}">Download</button>`:""}${cert.verification_token?`<button class="button ghost small" data-cert-copy="${attr(cert.verification_token)}">Copy verification</button>`:""}${cert.status==="issued"&&["system_admin","principal"].includes(role())?`<button class="button warning small" data-cert-revoke="${attr(cert.id)}">Revoke</button>`:""}${["issued","revoked"].includes(cert.status)&&role()==="system_admin"?`<button class="button ghost small" data-cert-replace="${attr(cert.id)}">Replacement</button>`:""}${role()==="system_admin"?`<button class="button danger small" data-cert-delete="${attr(cert.id)}">Delete permanently</button>`:""}</div></td></tr>`).join("")}</tbody></table></div></section>
       <section class="panel" style="margin-top:16px"><div class="panel-header"><div><h4>Immutable certificate history</h4><p>Preparation, approval, issue, PDF registration, revocation, and replacement events.</p></div></div>${events.length?`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Reason</th></tr></thead><tbody>${events.map(event=>`<tr><td>${isoDateTime(event.created_at)}</td><td>${esc(event.event_type.replaceAll("_"," "))}</td><td>${esc(event.actor_name||"System")}</td><td>${esc(event.reason||"")}</td></tr>`).join("")}</tbody></table></div>`:emptyState("No certificate events")}</section>`,
       `<button class="button ghost" id="certificateBatchClose" type="button">Close</button>${actions}`,`wide`);
     byId("certificateBatchClose").onclick=()=>{closeModal();state.certificateConsole=null;renderCertificates(state.viewToken,true)};
@@ -5117,36 +5218,51 @@
     byId("certificateRejectBatch")?.addEventListener("click",()=>reviewCertificateBatch(batchId,"rejected"));
     byId("certificateIssueBatch")?.addEventListener("click",()=>issueCertificateBatch(batchId));
     byId("certificateDownloadBatch")?.addEventListener("click",()=>generateCertificateBatchPdfs(data,true));
-    $$('[data-cert-generate]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{const cert=certs.find(item=>item.id===button.dataset.certGenerate);await createAndStoreCertificatePdf(data,cert);toast("Certificate PDF created");closeModal();await openCertificateBatch(batchId)}catch(error){toast("Certificate PDF not created",friendlyError(error),"error",8000)}finally{button.disabled=false}});
+    $$('[data-cert-generate]').forEach(button=>button.onclick=async()=>{button.disabled=true;try{const cert=certs.find(item=>item.id===button.dataset.certGenerate),result=await createAndStoreCertificatePdf(data,cert);toast("Certificate PDF created",result.fallbackUsed?"The uploaded design could not be rendered, so the professional built-in certificate design was used.":result.liveTemplateRecovered?"The current uploaded category design was recovered and applied successfully.":"The uploaded category design was applied successfully.");closeModal();await openCertificateBatch(batchId)}catch(error){toast("Certificate PDF not created",friendlyError(error),"error",8000)}finally{button.disabled=false}});
     $$('[data-cert-download]').forEach(button=>button.onclick=()=>downloadStoredCertificatePdf(data,certs.find(item=>item.id===button.dataset.certDownload)));
     $$('[data-cert-copy]').forEach(button=>button.onclick=async()=>{await navigator.clipboard.writeText(certificateVerificationUrl(button.dataset.certCopy));toast("Verification link copied")});
     $$('[data-cert-revoke]').forEach(button=>button.onclick=()=>revokeCertificateRecord(batchId,button.dataset.certRevoke));
     $$('[data-cert-replace]').forEach(button=>button.onclick=()=>replaceCertificateRecord(batchId,certs.find(item=>item.id===button.dataset.certReplace)));
+    $$('[data-cert-delete]').forEach(button=>button.onclick=()=>deleteCertificatePermanently(batchId,certs.find(item=>item.id===button.dataset.certDelete)));
   }
 
   async function submitCertificateBatch(batchId){if(!await confirmAction("Submit certificate batch","The Principal will review every certificate in this batch before it can be issued.","Submit"))return;try{await rpc("submit_certificate_batch",{target_batch_id:batchId});toast("Certificates submitted");closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true);await openCertificateBatch(batchId)}catch(error){toast("Batch not submitted",friendlyError(error),"error")}}
   async function reviewCertificateBatch(batchId,decision){const note=window.prompt(`${decision==="approved"?"Approval":"Rejection"} note:`,"")??"";if(decision==="rejected"&&note.trim().length<3){toast("Rejection note required","Enter the reason for returning the batch.","error");return}try{await rpc("review_certificate_batch",{target_batch_id:batchId,decision,review_note_text:note.trim()});toast(`Batch ${decision}`);closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true);await openCertificateBatch(batchId)}catch(error){toast("Review not saved",friendlyError(error),"error")}}
   async function issueCertificateBatch(batchId){const issueDate=window.prompt("Certificate issue date (YYYY-MM-DD):",new Date().toISOString().slice(0,10));if(!issueDate)return;if(!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)){toast("Invalid issue date","Use YYYY-MM-DD.","error");return}if(!await confirmAction("Issue all certificates","Unique certificate numbers and verification tokens will be permanently assigned. Official PDFs will then be created.","Issue certificates"))return;setLoading(true);try{await rpc("issue_certificate_batch",{target_batch_id:batchId,target_issue_date:issueDate});const data=await rpc("get_certificate_batch",{target_batch_id:batchId});await generateCertificateBatchPdfs(data,true);toast("Certificates issued",`${data.certificates?.length||0} certificates were issued and processed.`);closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true)}catch(error){toast("Certificates not issued",friendlyError(error),"error",9000);await reportClientError(error,{source:"certificate_issue",batch_id:batchId})}finally{setLoading(false)}}
   async function revokeCertificateRecord(batchId,certificateId){const reason=window.prompt("Reason for revoking this certificate:","")||"";if(reason.trim().length<5)return;if(!await confirmAction("Revoke certificate","The public verification page will immediately show that this certificate is invalid.","Revoke",true))return;try{await rpc("revoke_certificate",{target_certificate_id:certificateId,reason_text:reason.trim()});toast("Certificate revoked");closeModal();state.certificateConsole=null;await openCertificateBatch(batchId)}catch(error){toast("Certificate not revoked",friendlyError(error),"error")}}
+  async function deleteCertificatePermanently(batchId,certificate){
+    if(!certificate)return;const reason=window.prompt("Reason for permanently deleting this certificate:","")||"";
+    if(reason.trim().length<5){toast("Deletion reason required","Provide at least five characters.","error");return}
+    const confirmation=window.prompt(`Type DELETE to permanently remove ${certificate.certificate_number||certificate.recipient_name}:`,"")||"";
+    if(confirmation.trim().toUpperCase()!=="DELETE"){toast("Permanent deletion cancelled","The confirmation word did not match.","warning");return}
+    if(!await confirmAction("Delete certificate permanently","This removes the certificate record, verification reference, PDF registration, and certificate events. This action cannot be undone.","Delete permanently",true))return;
+    setLoading(true);try{const result=await rpc("delete_certificate_permanently",{target_certificate_id:certificate.id,reason_text:reason.trim()});if(result.storage_path){const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).remove([result.storage_path]);if(error){await reportClientError(error,{source:"certificate_pdf_cleanup",certificate_id:certificate.id,storage_path:result.storage_path});toast("Certificate deleted","The database record was removed. A private orphan PDF may require Storage cleanup.","warning",8000)}else toast("Certificate deleted permanently")}else toast("Certificate deleted permanently");closeModal();state.certificateConsole=null;await renderCertificates(state.viewToken,true);if(!result.batch_deleted)await openCertificateBatch(batchId)}catch(error){toast("Certificate not deleted",friendlyError(error),"error",8000)}finally{setLoading(false)}
+  }
   async function replaceCertificateRecord(batchId,certificate){const reason=window.prompt("Reason for creating a replacement certificate:","")||"";if(reason.trim().length<5)return;modal("Replacement certificate statement","The replacement will follow the full submission and Principal approval workflow. Leave the statement unchanged or correct it below.",`<label class="field"><span>Certificate statement</span><textarea id="replacementCertificateStatement" rows="7">${esc(certificate.statement_text)}</textarea></label>`,`<button class="button ghost" id="replacementCancel">Cancel</button><button class="button primary" id="replacementCreate">Create replacement draft</button>`,`small`);byId("replacementCancel").onclick=closeModal;byId("replacementCreate").onclick=async()=>{const button=byId("replacementCreate");button.disabled=true;try{const result=await rpc("create_certificate_replacement_draft",{target_certificate_id:certificate.id,reason_text:reason.trim(),replacement_statement:byId("replacementCertificateStatement").value.trim()});closeModal();state.certificateConsole=null;toast("Replacement draft created");await renderCertificates(state.viewToken,true);await openCertificateBatch(result.batch_id)}catch(error){toast("Replacement not created",friendlyError(error),"error")}finally{button.disabled=false}}}
 
   async function createCertificatePdf(data,certificate){
     const canvas=document.createElement("canvas");canvas.width=1754;canvas.height=1240;
-    const frozen=certificate.snapshot||{},ctx=canvas.getContext("2d"),template=frozen.template||data.template||{},school=frozen.school||data.school||state.boot?.school||{},principal=frozen.principal||data.principal||{},primary=template.primary_colour||school.primary_colour||"#0a2f73",accent=template.accent_colour||school.accent_colour||"#f1b51c";
-    if(template.storage_path){
+    const frozen=certificate.snapshot||{},ctx=canvas.getContext("2d"),frozenTemplate=frozen.template||{},liveTemplate=data.template||{},template=Object.keys(frozenTemplate).length?frozenTemplate:liveTemplate,school=frozen.school||data.school||state.boot?.school||{},principal=frozen.principal||data.principal||{},primary=template.primary_colour||liveTemplate.primary_colour||school.primary_colour||"#0a2f73",accent=template.accent_colour||liveTemplate.accent_colour||school.accent_colour||"#f1b51c";
+    let uploadedTemplateApplied=false;certificate.__usedBuiltInTemplateFallback=false;certificate.__usedLiveTemplateRecovery=false;
+    const templateCandidates=[template,liveTemplate].filter((candidate,index,list)=>candidate?.storage_path&&list.findIndex(item=>item?.storage_path===candidate.storage_path)===index);
+    for(const candidate of templateCandidates){
       try{
-        const background=await storedCertificateTemplateCanvas(template);
-        ctx.drawImage(background,0,0,canvas.width,canvas.height);
+        const background=await storedCertificateTemplateCanvas(candidate);
+        if(!background)throw new Error("The uploaded certificate design returned no rendered page.");
+        ctx.drawImage(background,0,0,canvas.width,canvas.height);uploadedTemplateApplied=true;certificate.__usedLiveTemplateRecovery=candidate.storage_path!==template.storage_path;break;
       }catch(error){
-        await reportClientError(error,{source:"certificate_template_render",certificate_id:certificate.id,certificate_type:data.batch?.certificate_type,storage_path:template.storage_path});
-        throw new Error("The uploaded certificate design is unavailable or could not be rendered. Restore or replace the category template, then try again.",{cause:error});
+        await reportClientError(error,{source:"certificate_template_render_attempt",certificate_id:certificate.id,certificate_type:data.batch?.certificate_type,storage_path:candidate.storage_path});
       }
-    }else{
+    }
+    if(templateCandidates.length&&!uploadedTemplateApplied)certificate.__usedBuiltInTemplateFallback=true;
+    if(!uploadedTemplateApplied){
       ctx.fillStyle="#fffdf7";ctx.fillRect(0,0,canvas.width,canvas.height);
+      const gradient=ctx.createLinearGradient(0,0,canvas.width,canvas.height);gradient.addColorStop(0,"rgba(241,181,28,.12)");gradient.addColorStop(.48,"rgba(255,255,255,0)");gradient.addColorStop(1,"rgba(10,47,115,.10)");ctx.fillStyle=gradient;ctx.fillRect(0,0,canvas.width,canvas.height);
       ctx.strokeStyle=primary;ctx.lineWidth=18;ctx.strokeRect(34,34,1686,1172);
       ctx.strokeStyle=accent;ctx.lineWidth=5;ctx.strokeRect(58,58,1638,1124);
       ctx.strokeStyle=primary;ctx.lineWidth=2;ctx.strokeRect(75,75,1604,1090);
       [[85,85],[1669,85],[85,1155],[1669,1155]].forEach(([x,y],index)=>{ctx.save();ctx.translate(x,y);ctx.rotate(index%2?Math.PI/2:0);ctx.fillStyle=accent;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(95,0);ctx.lineTo(0,95);ctx.closePath();ctx.fill();ctx.restore()});
+      ctx.strokeStyle="rgba(10,47,115,.18)";ctx.lineWidth=2;ctx.beginPath();ctx.arc(877,620,470,0,Math.PI*2);ctx.stroke();
     }
     let logo=null,signature=null;
     try{logo=await loadImage(schoolDisplayLogo(school))}catch(_){}
@@ -5179,7 +5295,7 @@
     return imagePdf(jpeg,841.89,595.28,1754,1240);
   }
   function wrappedTextLines(ctx,text,maxWidth){const words=String(text||"").split(/\s+/).filter(Boolean),lines=[];let line="";for(const word of words){const next=line?`${line} ${word}`:word;if(ctx.measureText(next).width>maxWidth&&line){lines.push(line);line=word}else line=next}if(line)lines.push(line);return lines}
-  async function createAndStoreCertificatePdf(data,certificate){if(role()!=="system_admin")throw new Error("Only the System Administrator can create official certificate PDFs");if(!certificate||certificate.status!=="issued")throw new Error("Only an issued certificate can have an official PDF");const pdf=await createCertificatePdf(data,certificate),checksum=await sha256(pdf),year=safeArchiveSegment(certificate.academic_year_name,"year"),safeNumber=safeArchiveSegment(certificate.certificate_number,"certificate"),path=`${data.batch.certificate_type}/${year}/${safeNumber}-r${certificate.revision_no}-${Date.now()}.pdf`,previous=certificate.pdf_storage_path||"";const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).upload(path,pdf,{contentType:"application/pdf",upsert:false,cacheControl:"31536000"});if(error)throw error;try{await rpc("register_certificate_pdf",{target_certificate_id:certificate.id,target_storage_path:path,target_checksum:checksum})}catch(error){await state.client.storage.from(CONFIG.certificatePdfBucket).remove([path]).catch(()=>{});throw error}if(previous&&previous!==path)await state.client.storage.from(CONFIG.certificatePdfBucket).remove([previous]).catch(()=>{});certificate.pdf_storage_path=path;certificate.pdf_sha256=checksum;return {pdf,path,checksum}}
+  async function createAndStoreCertificatePdf(data,certificate){if(role()!=="system_admin")throw new Error("Only the System Administrator can create official certificate PDFs");if(!certificate||certificate.status!=="issued")throw new Error("Only an issued certificate can have an official PDF");const pdf=await createCertificatePdf(data,certificate),checksum=await sha256(pdf),year=safeArchiveSegment(certificate.academic_year_name,"year"),safeNumber=safeArchiveSegment(certificate.certificate_number,"certificate"),path=`${data.batch.certificate_type}/${year}/${safeNumber}-r${certificate.revision_no}-${Date.now()}.pdf`,previous=certificate.pdf_storage_path||"";const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).upload(path,pdf,{contentType:"application/pdf",upsert:false,cacheControl:"31536000"});if(error)throw error;try{await rpc("register_certificate_pdf",{target_certificate_id:certificate.id,target_storage_path:path,target_checksum:checksum})}catch(error){await state.client.storage.from(CONFIG.certificatePdfBucket).remove([path]).catch(()=>{});throw error}if(previous&&previous!==path)await state.client.storage.from(CONFIG.certificatePdfBucket).remove([previous]).catch(()=>{});certificate.pdf_storage_path=path;certificate.pdf_sha256=checksum;return {pdf,path,checksum,fallbackUsed:Boolean(certificate.__usedBuiltInTemplateFallback),liveTemplateRecovered:Boolean(certificate.__usedLiveTemplateRecovery)}}
   async function downloadStoredCertificatePdf(data,certificate){setLoading(true);try{let blob;if(role()==="system_admin"){blob=(await createAndStoreCertificatePdf(data,certificate)).pdf}else{if(!certificate.pdf_storage_path)throw new Error("Official certificate PDF has not been created");const url=await signedUrl(CONFIG.certificatePdfBucket,certificate.pdf_storage_path,300);const response=await fetch(url);if(!response.ok)throw new Error("Certificate PDF could not be downloaded");blob=await response.blob()}downloadBlob(`${safeArchiveSegment(certificate.certificate_number,"Certificate")}_${safeArchiveSegment(certificate.recipient_name,"Recipient")}.pdf`,blob);toast("Certificate downloaded")}catch(error){toast("Certificate unavailable",friendlyError(error),"error")}finally{setLoading(false)}}
   async function generateCertificateBatchPdfs(data,downloadZip=true){if(!window.JSZip&&downloadZip)throw new Error("ZIP library unavailable");const issued=(data.certificates||[]).filter(item=>item.status==="issued"),zip=downloadZip?new window.JSZip():null,manifest=[];if(!issued.length)throw new Error("No issued certificates are available");for(let index=0;index<issued.length;index++){const cert=issued[index];try{let pdf;if(role()==="system_admin")pdf=(await createAndStoreCertificatePdf(data,cert)).pdf;else{if(!cert.pdf_storage_path)throw new Error("Official PDF not created");const url=await signedUrl(CONFIG.certificatePdfBucket,cert.pdf_storage_path,300),response=await fetch(url);if(!response.ok)throw new Error("PDF download failed");pdf=await response.blob()}const filename=`${safeArchiveSegment(cert.certificate_number,"Certificate")}_${safeArchiveSegment(cert.recipient_name,"Recipient")}.pdf`;if(zip)zip.file(filename,pdf);manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"included",file_name:filename,error:""})}catch(error){manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"failed",file_name:"",error:friendlyError(error)});await reportClientError(error,{source:"certificate_batch_pdf",certificate_id:cert.id})}}
     if(zip){const headers=["certificate_number","recipient","status","file_name","error"];zip.file("CERTIFICATE_MANIFEST.csv",[headers.join(","),...manifest.map(row=>headers.map(key=>csvCell(row[key])).join(","))].join("\n"));const included=manifest.filter(row=>row.status==="included");if(!included.length)throw new Error("No certificate PDFs could be prepared");const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});downloadBlob(`${safeArchiveSegment(data.batch.title,"Certificates")}_${safeArchiveSegment(data.batch.academic_year_name,"Year")}.zip`,blob);toast("Certificate package downloaded",`${included.length} certificate PDF${included.length===1?"":"s"} included.`)}return manifest}
@@ -5197,7 +5313,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_1_3.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_1_4.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5277,7 +5393,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.1.3 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.1.4 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
