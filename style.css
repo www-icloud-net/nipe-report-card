@@ -841,3 +841,24 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .certificate-template-design .section-title{align-items:flex-start}
 .certificate-template-preview{display:flex;justify-content:center;align-items:center;max-height:72vh;overflow:auto;padding:12px;background:#eef3f9;border:1px solid var(--line);border-radius:14px}
 .certificate-template-preview img{display:block;max-width:100%;height:auto;background:#fff;box-shadow:0 12px 30px rgba(20,42,76,.18)}
+
+
+/* Report Card Enterprise v7.1.3: certificate batch recipient layout */
+.certificate-batch-form{min-width:0;max-width:100%;overflow:hidden}
+.certificate-batch-form .form-grid{align-items:start}
+.certificate-recipient-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:2px 0}
+.certificate-selection-summary{display:inline-flex;align-items:center;min-height:34px;padding:6px 10px;border-radius:999px;background:#eef4fc;color:var(--navy);font-size:12px;font-weight:800;white-space:nowrap}
+.certificate-recipient-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-width:100%;max-height:350px;min-height:120px;padding:4px;overflow-y:auto;overflow-x:hidden;align-content:start;scrollbar-gutter:stable}
+.certificate-recipient-results>.empty{grid-column:1/-1}
+.certificate-recipient-card{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:start;gap:11px;width:100%;min-width:0;padding:13px 14px;border:1px solid var(--line);border-radius:12px;background:#fff;cursor:pointer;transition:.16s border-color,.16s background,.16s box-shadow}
+.certificate-recipient-card:hover{border-color:#b8cbe5;background:#f8fbff;box-shadow:0 4px 12px rgba(13,94,200,.07)}
+.certificate-recipient-card:has(input:checked){border-color:var(--blue);background:#edf5ff;box-shadow:0 0 0 2px rgba(13,94,200,.08)}
+.certificate-recipient-card>input{width:18px!important;height:18px!important;min-width:18px;margin:2px 0 0;padding:0;accent-color:var(--blue);box-shadow:none}
+.certificate-recipient-copy{display:grid;gap:3px;min-width:0}
+.certificate-recipient-name{display:block;color:#182b4b;font-size:13px;line-height:1.35;overflow-wrap:anywhere}
+.certificate-recipient-meta{display:block;color:var(--muted);font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.certificate-recipient-warning{min-height:0;margin-top:2px;font-size:10px}
+.certificate-recipient-card.disabled{cursor:not-allowed;opacity:.62;background:#f5f7fa}
+.list-card.selectable>input[type="checkbox"]{width:18px;height:18px;min-width:18px;padding:0}
+@media(max-width:820px){.certificate-recipient-results{grid-template-columns:1fr;max-height:390px}.certificate-recipient-toolbar{align-items:flex-start}.certificate-recipient-toolbar .button-row{width:100%}.certificate-recipient-toolbar .button{flex:1}}
+@media(max-width:560px){.certificate-recipient-card{padding:12px}.certificate-recipient-results{padding:2px;gap:8px}.certificate-selection-summary{width:100%;justify-content:center}}
