@@ -1,17 +1,18 @@
 (() => {
   "use strict";
 
+  const RUNTIME_CONFIG = window.RCE_CONFIG || window.NIS_CONFIG || {};
   const CONFIG = Object.freeze({
-    supabaseUrl: window.NIS_CONFIG?.supabaseUrl || "YOUR_SUPABASE_URL",
-    supabaseAnonKey: window.NIS_CONFIG?.supabaseAnonKey || "YOUR_SUPABASE_ANON_KEY",
-    appName: window.NIS_CONFIG?.appName || "Nipe International School Report Card System",
-    schoolName: window.NIS_CONFIG?.schoolName || "Nipe International School",
-    schoolShortName: window.NIS_CONFIG?.schoolShortName || "Nipe Reports",
-    userEmailDomain: window.NIS_CONFIG?.userEmailDomain || "nip.com",
-    reportNumberPrefix: window.NIS_CONFIG?.reportNumberPrefix || "NIS",
-    generatedSchoolPackage: Boolean(window.NIS_CONFIG?.generatedSchoolPackage),
-    logoPath: window.NIS_CONFIG?.logoPath || "assets/nipe-school-logo.png",
-    defaultReportTemplatePath: window.NIS_CONFIG?.defaultReportTemplatePath || "assets/approved-terminal-report-template.png",
+    supabaseUrl: RUNTIME_CONFIG.supabaseUrl || "YOUR_SUPABASE_URL",
+    supabaseAnonKey: RUNTIME_CONFIG.supabaseAnonKey || "YOUR_SUPABASE_ANON_KEY",
+    appName: RUNTIME_CONFIG.appName || "Nipe International School Report Card System",
+    schoolName: RUNTIME_CONFIG.schoolName || "Nipe International School",
+    schoolShortName: RUNTIME_CONFIG.schoolShortName || "Nipe Reports",
+    userEmailDomain: RUNTIME_CONFIG.userEmailDomain || "nip.com",
+    reportNumberPrefix: RUNTIME_CONFIG.reportNumberPrefix || "NIS",
+    generatedSchoolPackage: Boolean(RUNTIME_CONFIG.generatedSchoolPackage),
+    logoPath: RUNTIME_CONFIG.logoPath || "assets/nipe-school-logo.png",
+    defaultReportTemplatePath: RUNTIME_CONFIG.defaultReportTemplatePath || "assets/approved-terminal-report-template.png",
     photoBucket: "student-photos",
     pdfBucket: "report-pdfs",
     backupBucket: "system-backups",
@@ -700,14 +701,15 @@
   }
 
   init().catch(error=>{console.error(error);showOnly("authView");setAuthMessage("Service unavailable.");setLoading(false)});
-  if(window.__NIS_TEMPLATE_TEST_MODE__){
-    window.NIS_TEMPLATE_TEST_HOOKS=Object.freeze({
+  if(window.__RCE_TEMPLATE_TEST_MODE__||window.__NIS_TEMPLATE_TEST_MODE__){
+    window.RCE_TEMPLATE_TEST_HOOKS=Object.freeze({
       reportTemplateRangeForClass,validateReportTemplateFile,normaliseTemplateCanvas,drawAssignedTemplateOverlay,drawPreferredTerminalReport,builtInReportTemplateCanvas,
       resolveReportTemplateMimeType,renderPdfTemplateBlob,subjectScoreBreakdown,closeModal,
       ordinalReportPosition,reportBodyFontName,reportBodyFontSize,reportBodyFontScale,reportSubjectPositionMap,
       defaultGradingInterpretation,normaliseGradingGuide,defaultReportGradingGuide,drawDynamicGradingScale,reportGradingGuide,
       setBoot:value=>{state.boot=value},getState:()=>state
     });
+    window.NIS_TEMPLATE_TEST_HOOKS=window.RCE_TEMPLATE_TEST_HOOKS;
   }
 
 
@@ -5025,7 +5027,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.5 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.6 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5289,7 +5291,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.5 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.6 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5330,7 +5332,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.5 Final production audit and package integrity release
+  // Report Card Enterprise v7.2.6 Final internal identifier standardisation release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5669,7 +5671,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_5_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_6_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5753,7 +5755,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.5 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.6 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }

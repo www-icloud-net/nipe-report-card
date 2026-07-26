@@ -1,4 +1,4 @@
-const CACHE_NAME = "nis-report-card-v7-2-5-final-r1";
+const CACHE_NAME = "rce-report-card-v7-2-6-final-r1";
 const STATIC_ASSETS = [
   "./","index.html","style.css","app.js","config.js","manifest.webmanifest",
   "assets/nipe-school-logo.png","assets/approved-terminal-report-template.png","assets/approved-terminal-report-template.pdf",
@@ -42,7 +42,7 @@ self.addEventListener("fetch",event=>{
   })));
 });
 self.addEventListener("sync",event=>{
-  if(event.tag==="nis-outbox")event.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:"FLUSH_OUTBOX"}))));
+  if(event.tag==="rce-outbox"||event.tag==="nis-outbox")event.waitUntil(self.clients.matchAll({type:"window",includeUncontrolled:true}).then(clients=>clients.forEach(client=>client.postMessage({type:"FLUSH_OUTBOX"}))));
 });
 self.addEventListener("message",event=>{
   if(event.data?.type==="SKIP_WAITING")self.skipWaiting();
