@@ -2679,7 +2679,7 @@
           <label class="field"><span>Term</span><select name="term_id" required>${optionList(state.boot.terms||[],"id","name",selectedTerm,"Select term")}</select></label>
           <label class="field"><span>Class</span><select name="class_id" required>${optionList(state.boot.classes||[],"id","name",selectedClass,"Select class")}</select></label>
         </div>
-        <div class="template-information"><strong>Latest-format enforcement</strong><span>Every accessible published report is regenerated with the current positions, colours, typography, student photograph, class-range template, and Principal signature before it is added to the ZIP.</span></div>
+        <div class="template-information"><strong>Latest-format enforcement</strong><span>The system first regenerates each accessible published report with the current official design and Principal signature. If secure live regeneration is temporarily unavailable, it safely includes the previously published official PDF instead of failing the whole class package.</span></div>
         <div id="bulkPublishedReportsProgress" class="template-information hidden" aria-live="polite"><strong>Preparing package</strong><span id="bulkPublishedReportsProgressText">Waiting to start</span></div>
       </form>`,
       `<button class="button ghost" id="bulkPublishedReportsCancel" type="button">Cancel</button><button class="button primary" id="bulkPublishedReportsRun" type="button">Download class package</button>`,"small");
@@ -2729,10 +2729,16 @@
             try{
               const generated=await createAndStoreOfficialPdf(editor,publication);pdf=generated.pdf;storageStatus="refreshed";storedRefreshes+=1;
             }catch(storageError){
-              pdf=await createReportPdf(editor,publication);fallbackDownloads+=1;
               await reportClientError(storageError,{source:"bulk_class_pdf_storage_refresh",report_id:row.id,class_id:classRow.id,term_id:term.id});
+              if(publication.storage_path){
+                try{pdf=await downloadStoredOfficialReportPdf(publication);storageStatus="stored_official_fallback";fallbackDownloads+=1}
+                catch(storedError){await reportClientError(storedError,{source:"bulk_class_pdf_stored_fallback",report_id:row.id,class_id:classRow.id,term_id:term.id});pdf=await createReportPdf(editor,publication);storageStatus="regenerated_not_stored";fallbackDownloads+=1}
+              }else{pdf=await createReportPdf(editor,publication);storageStatus="regenerated_not_stored";fallbackDownloads+=1}
             }
-          }else{pdf=await createReportPdf(editor,publication);fallbackDownloads+=1}
+          }else if(publication.storage_path){
+            try{pdf=await downloadStoredOfficialReportPdf(publication);storageStatus="stored_official";fallbackDownloads+=1}
+            catch(storedError){await reportClientError(storedError,{source:"bulk_class_pdf_stored_download",report_id:row.id,class_id:classRow.id,term_id:term.id});pdf=await createReportPdf(editor,publication);storageStatus="regenerated_not_stored";fallbackDownloads+=1}
+          }else{pdf=await createReportPdf(editor,publication);storageStatus="regenerated_not_stored";fallbackDownloads+=1}
           const studentName=editor.student?.full_name||row.student_name||"Student",admission=editor.student?.admission_no||row.admission_no||"";
           const reportNumber=editor.report?.report_number||row.report_number||row.id;
           const filename=`${safeArchiveSegment(reportNumber,"Report")}_${safeArchiveSegment(admission,"Admission")}_${safeArchiveSegment(studentName,"Student")}.pdf`;
@@ -2747,7 +2753,7 @@
       if(!included.length)throw new Error("None of the published reports could be generated. Review the report and Storage configuration, then try again.");
       const headers=["report_number","student_name","admission_no","class_name","term_name","status","storage_refresh","file_name","error"];
       zip.file("BULK_DOWNLOAD_MANIFEST.csv",[headers.join(","),...manifest.map(item=>headers.map(key=>csvCell(item[key])).join(","))].join("\n"));
-      zip.file("README.txt",`${schoolDisplayName()} Published Report Cards\n\nClass: ${classRow.name}\nTerm: ${term.name}\nGenerated: ${new Date().toISOString()}\nReports included: ${included.length}\nFailed: ${failed}\nStored PDFs refreshed: ${storedRefreshes}\nLatest-format fallback downloads: ${fallbackDownloads}\n\nOnly reports accessible to the signed-in System Administrator or assigned teacher are included. See BULK_DOWNLOAD_MANIFEST.csv for details.\n`);
+      zip.file("README.txt",`${schoolDisplayName()} Published Report Cards\n\nClass: ${classRow.name}\nTerm: ${term.name}\nGenerated: ${new Date().toISOString()}\nReports included: ${included.length}\nFailed: ${failed}\nStored PDFs refreshed: ${storedRefreshes}\nStored or regenerated fallback downloads: ${fallbackDownloads}\n\nOnly reports accessible to the signed-in System Administrator or assigned teacher are included. See BULK_DOWNLOAD_MANIFEST.csv for details.\n`);
       progressText.textContent="Compressing ZIP package";
       const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}},metadata=>{if(progressText)progressText.textContent=`Compressing ZIP package: ${Math.round(metadata.percent)}%`});
       const date=new Date().toISOString().slice(0,10),filename=`Published_Report_Cards_${safeArchiveSegment(classRow.name,"Class")}_${safeArchiveSegment(term.name,"Term")}_${date}.zip`;
@@ -2828,21 +2834,29 @@
         :await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:null,target_term_id:null});
       const publication=(editor.publications||[]).find(item=>!item.revoked_at);
       if(!publication)throw new Error("Active publication record not found");
-      let pdf,safeName=(editor.report.report_number||editor.report.id).replace(/[^A-Za-z0-9_-]/g,"_");
+      let pdf,safeName=(editor.report.report_number||editor.report.id).replace(/[^A-Za-z0-9_-]/g,"_"),usedStoredFallback=false,refreshError=null;
       const canRefreshStoredPdf=can("publish_reports")&&["system_admin","class_teacher"].includes(role());
       if(canRefreshStoredPdf){
-        const generated=await createAndStoreOfficialPdf(editor,publication);
-        pdf=generated.pdf;safeName=generated.safeName;
-        if(state.reportEditor?.report?.id===reportId){
-          state.reportEditor=await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:null,target_term_id:null});
-          await enrichReportGradingGuide(state.reportEditor);
-          renderReportEditor();
+        try{
+          const generated=await createAndStoreOfficialPdf(editor,publication);
+          pdf=generated.pdf;safeName=generated.safeName;
+          if(state.reportEditor?.report?.id===reportId){
+            state.reportEditor=await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:null,target_term_id:null});
+            await enrichReportGradingGuide(state.reportEditor);
+            renderReportEditor();
+          }
+        }catch(error){
+          refreshError=error;
+          if(publication.storage_path){pdf=await downloadStoredOfficialReportPdf(publication);usedStoredFallback=true}
+          else throw error;
         }
-      }else{
-        pdf=await createReportPdf(editor,publication);
-      }
+      }else if(publication.storage_path){
+        try{pdf=await downloadStoredOfficialReportPdf(publication);usedStoredFallback=true}
+        catch(error){refreshError=error;pdf=await createReportPdf(editor,publication)}
+      }else pdf=await createReportPdf(editor,publication);
       downloadBlob(`${safeName}.pdf`,pdf);
-      toast("Latest official PDF downloaded","Current positions, colours, typography, photograph, template, and Principal signature were applied.");
+      if(refreshError)await reportClientError(refreshError,{source:"latest_pdf_regeneration_fallback",report_id:reportId});
+      toast(usedStoredFallback?"Official PDF downloaded":"Latest official PDF downloaded",usedStoredFallback?"The secure, previously published official PDF was downloaded because live regeneration was temporarily unavailable. No report data was lost.":"Current positions, colours, typography, photograph, template, and Principal signature were applied.",usedStoredFallback?"warning":"success",8500);
     }catch(error){toast("PDF unavailable",friendlyError(error),"error",6500);await reportClientError(error,{source:"latest_pdf_download",report_id:reportId})}
     finally{setLoading(false)}
   }
@@ -2856,25 +2870,86 @@
   async function loadImage(url) {
     return new Promise((resolve,reject)=>{const image=new Image();image.crossOrigin="anonymous";image.onload=()=>resolve(image);image.onerror=()=>reject(new Error("Image could not be decoded"));image.src=url});
   }
+  function normaliseStorageObjectPath(bucket,path) {
+    let value=String(path||"").trim();
+    if(!value)return "";
+    if(value.startsWith("data:")||value.startsWith("assets/"))return value;
+    try{
+      if(/^https?:\/\//i.test(value)){
+        const parsed=new URL(value,location.href),markers=[
+          `/storage/v1/object/sign/${bucket}/`,
+          `/storage/v1/object/authenticated/${bucket}/`,
+          `/storage/v1/object/public/${bucket}/`,
+          `/storage/v1/object/${bucket}/`
+        ];
+        for(const marker of markers){
+          const index=parsed.pathname.indexOf(marker);
+          if(index>=0){value=parsed.pathname.slice(index+marker.length);break}
+        }
+      }
+    }catch(_){/* Keep the supplied path and continue with safe normalisation. */}
+    value=value.split("?")[0].split("#")[0].replace(/^\/+/,"");
+    if(value.startsWith(`${bucket}/`))value=value.slice(bucket.length+1);
+    try{return decodeURIComponent(value)}catch(_){return value}
+  }
+  function privateBlobWithDetectedType(blob,path) {
+    if(!blob)return blob;
+    if(blob.type&&blob.type!=="application/octet-stream")return blob;
+    const lower=String(path||"").toLowerCase();
+    const type=lower.endsWith(".png")?"image/png":lower.endsWith(".webp")?"image/webp":lower.endsWith(".jpg")||lower.endsWith(".jpeg")?"image/jpeg":lower.endsWith(".pdf")?"application/pdf":"";
+    return type?new Blob([blob],{type}):blob;
+  }
+  async function decodePrivateImageBlob(blob,path,label) {
+    const typed=privateBlobWithDetectedType(blob,path),objectUrl=URL.createObjectURL(typed);
+    try{return await loadImage(objectUrl)}
+    catch(firstError){
+      try{
+        const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||""));reader.onerror=()=>reject(reader.error||firstError);reader.readAsDataURL(typed)});
+        return await loadImage(dataUrl);
+      }catch(secondError){throw new Error(`${label} was downloaded but could not be decoded as an image.`,{cause:secondError})}
+    }finally{URL.revokeObjectURL(objectUrl)}
+  }
+  async function downloadPrivateStorageBlob(bucket,path,label="Private file",maxAttempts=4) {
+    const raw=String(path||"").trim(),normalised=normaliseStorageObjectPath(bucket,raw);
+    const candidates=[...new Set([normalised,raw].filter(Boolean))];
+    if(!candidates.length)throw new Error(`${label} path is missing.`);
+    let lastError=null;
+    for(let attempt=0;attempt<maxAttempts;attempt+=1){
+      for(const candidate of candidates){
+        try{
+          if(/^https?:\/\//i.test(candidate)){
+            const response=await fetch(candidate,{cache:"no-store"});
+            if(!response.ok)throw new Error(`${label} request failed with status ${response.status}`);
+            const blob=await response.blob();if(!blob.size)throw new Error(`${label} is empty`);return privateBlobWithDetectedType(blob,normalised||candidate);
+          }
+          const {data,error}=await state.client.storage.from(bucket).download(candidate);
+          if(error||!data||!data.size)throw error||new Error(`${label} is unavailable or empty`);
+          return privateBlobWithDetectedType(data,candidate);
+        }catch(error){lastError=error}
+        try{
+          const cache=bucket===CONFIG.signatureBucket?state.signatureUrls:bucket===CONFIG.photoBucket?state.photoUrls:state.pdfUrls;
+          cache?.delete?.(candidate);
+          const url=await signedUrl(bucket,candidate,900),response=await fetch(url,{cache:"no-store"});
+          if(!response.ok)throw new Error(`${label} signed request failed with status ${response.status}`);
+          const blob=await response.blob();if(!blob.size)throw new Error(`${label} is empty`);return privateBlobWithDetectedType(blob,candidate);
+        }catch(error){lastError=error}
+      }
+      if(attempt<maxAttempts-1)await sleep(250*(attempt+1));
+    }
+    throw new Error(`${label} could not be loaded from secure Storage after ${maxAttempts} attempts. Check the connection and Storage access, then try again.`,{cause:lastError});
+  }
   async function loadPrivateImageAsset(bucket,path,label="Private image") {
     if(!path)return null;
-    let lastError=null;
-    for(let attempt=0;attempt<2;attempt+=1){
-      try{
-        const {data,error}=await state.client.storage.from(bucket).download(path);
-        if(error||!data)throw error||new Error("Storage file is unavailable");
-        const objectUrl=URL.createObjectURL(data);
-        try{return await loadImage(objectUrl)}finally{URL.revokeObjectURL(objectUrl)}
-      }catch(error){lastError=error}
-      try{
-        const cache=bucket===CONFIG.signatureBucket?state.signatureUrls:bucket===CONFIG.photoBucket?state.photoUrls:state.pdfUrls;
-        cache?.delete?.(path);
-        const image=await loadImage(await signedUrl(bucket,path,900));
-        if(image)return image;
-      }catch(error){lastError=error}
-      if(attempt===0)await sleep(180);
-    }
-    throw new Error(`${label} could not be loaded from secure Storage. Restore or re-upload the file and try again.`,{cause:lastError});
+    const normalised=normaliseStorageObjectPath(bucket,path),blob=await downloadPrivateStorageBlob(bucket,path,label,4);
+    return await decodePrivateImageBlob(blob,normalised||path,label);
+  }
+  async function downloadStoredOfficialReportPdf(publication,label="The stored official report PDF") {
+    const path=publication?.storage_path||"";
+    if(!path)throw new Error("No stored official report PDF is registered for this publication.");
+    const blob=await downloadPrivateStorageBlob(CONFIG.pdfBucket,path,label,4),bytes=new Uint8Array(await blob.arrayBuffer());
+    const signature=String.fromCharCode(...bytes.slice(0,5));
+    if(bytes.length<5||signature!=="%PDF-")throw new Error(`${label} is not a valid PDF file.`);
+    return new Blob([bytes],{type:"application/pdf"});
   }
   function drawImageContain(ctx,image,x,y,width,height) {
     const scale=Math.min(width/image.width,height/image.height),drawWidth=image.width*scale,drawHeight=image.height*scale;ctx.drawImage(image,x+(width-drawWidth)/2,y+(height-drawHeight)/2,drawWidth,drawHeight);
@@ -4942,7 +5017,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.3 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.4 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5206,7 +5281,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.3 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.4 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5247,7 +5322,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.3 Final platform-control and signature-reliability release
+  // Report Card Enterprise v7.2.4 Final report-PDF storage access and fallback reliability release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5537,7 +5612,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_3_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_4_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5621,7 +5696,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.3 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.4 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
