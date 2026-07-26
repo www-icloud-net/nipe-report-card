@@ -23,6 +23,23 @@
     pageSize: 20
   });
 
+  function stableInstallationHash(value) {
+    let hash=2166136261;
+    for(const character of String(value||"")){
+      hash^=character.charCodeAt(0);
+      hash=Math.imul(hash,16777619);
+    }
+    return (hash>>>0).toString(36);
+  }
+  const INSTALLATION_SCOPE_SOURCE=[
+    CONFIG.supabaseUrl,
+    CONFIG.reportNumberPrefix,
+    window.location.origin,
+    window.location.pathname.replace(/[^/]*$/,""),
+  ].join("|");
+  const INSTALLATION_SCOPE_KEY=stableInstallationHash(INSTALLATION_SCOPE_SOURCE);
+  const LOCAL_DATABASE_NAME=`rce-report-card-${INSTALLATION_SCOPE_KEY}`;
+
   const ROLE_LABELS = {
     platform_super_admin: "Platform Super Administrator",
     system_admin: "System Administrator",
@@ -288,7 +305,7 @@
 
   function openLocalDb() {
     return new Promise((resolve,reject)=>{
-      const request=indexedDB.open("nis-report-card",2);
+      const request=indexedDB.open(LOCAL_DATABASE_NAME,2);
       request.onupgradeneeded=()=>{
         const db=request.result;
         if(!db.objectStoreNames.contains("outbox")) db.createObjectStore("outbox",{keyPath:"id"});
@@ -308,12 +325,51 @@
       tx.onerror=()=>reject(tx.error);
     });
   }
-  const outboxAll=()=>idbTransaction("outbox","readonly",os=>os.getAll());
-  const outboxPut=item=>idbTransaction("outbox","readwrite",os=>os.put(item));
+  const outboxAll=async()=>{
+    const items=await idbTransaction("outbox","readonly",os=>os.getAll());
+    return (items||[]).filter(item=>!item?.installationScope||item.installationScope===INSTALLATION_SCOPE_KEY);
+  };
+  const outboxPut=item=>idbTransaction("outbox","readwrite",os=>os.put({...item,installationScope:INSTALLATION_SCOPE_KEY}));
   const outboxDelete=id=>idbTransaction("outbox","readwrite",os=>os.delete(id));
-  const draftPut=item=>idbTransaction("drafts","readwrite",os=>os.put(item));
-  const draftGet=key=>idbTransaction("drafts","readonly",os=>os.get(key));
+  const draftPut=item=>idbTransaction("drafts","readwrite",os=>os.put({...item,installationScope:INSTALLATION_SCOPE_KEY}));
+  const draftGet=async key=>{
+    const item=await idbTransaction("drafts","readonly",os=>os.get(key));
+    return item&&(!item.installationScope||item.installationScope===INSTALLATION_SCOPE_KEY)?item:undefined;
+  };
   const draftDelete=key=>idbTransaction("drafts","readwrite",os=>os.delete(key));
+
+  async function legacyOfflineDataCount() {
+    if(typeof indexedDB?.databases!=="function") return 0;
+    const databases=await indexedDB.databases().catch(()=>[]);
+    if(!(databases||[]).some(item=>item?.name==="nis-report-card")) return 0;
+    const legacyDb=await new Promise((resolve,reject)=>{
+      const request=indexedDB.open("nis-report-card");
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error);
+    });
+    try {
+      const stores=["outbox","drafts"].filter(name=>legacyDb.objectStoreNames.contains(name));
+      if(!stores.length) return 0;
+      return await new Promise((resolve,reject)=>{
+        const transaction=legacyDb.transaction(stores,"readonly");
+        let total=0;
+        for(const name of stores){
+          const request=transaction.objectStore(name).count();
+          request.onsuccess=()=>{total+=Number(request.result||0)};
+        }
+        transaction.oncomplete=()=>resolve(total);
+        transaction.onerror=()=>reject(transaction.error);
+      });
+    } finally { legacyDb.close(); }
+  }
+  async function warnLegacyOfflineData() {
+    const warningKey=`rce-legacy-offline-warning-${INSTALLATION_SCOPE_KEY}`;
+    if(sessionStorage.getItem(warningKey)==="shown") return;
+    const count=await legacyOfflineDataCount().catch(()=>0);
+    if(!count) return;
+    sessionStorage.setItem(warningKey,"shown");
+    toast("Legacy offline records detected",`${count} record${count===1?"":"s"} remain in the former shared browser database. Do not clear browser data until those records have been reviewed and synchronised from the previous deployment.`,"warning",12000);
+  }
 
   async function refreshPendingCount() {
     const items=await outboxAll().catch(()=>[]);
@@ -419,6 +475,7 @@
       navigator.serviceWorker.addEventListener("message",event=>{if(event.data?.type==="FLUSH_OUTBOX")flushOutbox()});
     }
     await refreshPendingCount();
+    await warnLegacyOfflineData();
 
     const params=new URLSearchParams(location.search);
     const verifyToken=params.get("verify");
@@ -2642,7 +2699,7 @@
           subjects:activeSubjects
         });
         const safeClass=(classRow?.name||"All_Classes").replace(/[^A-Za-z0-9_-]+/g,"_");
-        downloadBlob(`NIS_Manual_Report_Card_Template_${safeClass}.pdf`,pdf);
+        downloadBlob(`${schoolReportPrefix()}_Manual_Report_Card_Template_${safeClass}.pdf`,pdf);
         closeModal();
         toast("Manual template downloaded",`${activeSubjects.length} subjects included.`);
       }catch(error){
@@ -3551,7 +3608,7 @@
 
   function reportVerificationCode(report={},templateMeta={},manual=false) {
     if(!manual&&report.report_number)return String(report.report_number);
-    return `NIS-${reportYearDigits(templateMeta.academicYearName)}-00000`;
+    return `${schoolReportPrefix()}-${reportYearDigits(templateMeta.academicYearName)}-00000`;
   }
 
   function drawInlineReportField(ctx,{label,value,x,y,maxWidth=500,align="left",fontSize=20,minimumSize=13}) {
@@ -5027,7 +5084,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.6 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.7 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5291,7 +5348,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.6 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.7 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5332,7 +5389,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.6 Final internal identifier standardisation release
+  // Report Card Enterprise v7.2.7 Final cross-school isolation and reusable-package hardening release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5671,7 +5728,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_6_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_7_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5755,7 +5812,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.6 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.7 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
