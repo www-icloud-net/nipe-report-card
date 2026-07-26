@@ -1,8 +1,14 @@
-REPORT CARD ENTERPRISE v7.2.1 FINAL REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v7.2.2 FINAL REUSABLE SCHOOLS EDITION
 
-1. Preserve the production config.js values.
-2. No SQL execution is required for this visual-alignment release.
-3. Replace the deployed frontend files with this directory.
-4. Hard-refresh the browser or clear the previous service-worker cache.
-5. Test a built-in certificate for transparent logo watermarking and removal of the former large circle.
-6. Test Principal signature-on-line alignment on certificates and on both report-card rendering paths.
+Deploy every file in this directory to the approved GitHub Pages branch.
+Preserve the production Supabase values in config.js.
+Do not publish service-role keys, package-signing secrets, backup encryption keys, or GitHub credentials.
+
+For an upgrade from v7.2.1 Final:
+1. Run the appended v7.2.2 section of 09_schema.sql in Supabase.
+2. Deploy this complete frontend directory.
+3. Redeploy platform-package-manager and scheduled-backup.
+4. Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_2_FINAL.zip through the Platform Super Administrator portal.
+5. Hard-refresh all school devices.
+
+The official report generator now redraws the grading guide from the configured academic scale and preserves the frozen guide on submitted, approved, and published reports.

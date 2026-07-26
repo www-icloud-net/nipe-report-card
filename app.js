@@ -657,7 +657,7 @@
   function handleRealtime(topic,payload) {
     state.lastSync=new Date();setSync("online","Live");
     const table=payload?.payload?.table||payload?.table||"";
-    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations","academic_period_controls","report_correction_requests","student_lifecycle_events","transcript_issuances","privacy_requests","security_events","recovery_test_runs","certificate_templates","teacher_award_categories","certificate_batches","certificates","certificate_events"].includes(table))state.workspace=null;
+    if(["profiles","user_class_access","teachers","headteachers","classes","subjects","class_subjects","grading_scales","students","enrollments","student_reports","subject_results","class_attendance_registers","student_attendance_entries","emergency_academic_delegations","academic_period_controls","report_correction_requests","student_lifecycle_events","transcript_issuances","privacy_requests","security_events","recovery_test_runs","certificate_templates","teacher_award_categories","certificate_batches","certificates","certificate_events"].includes(table))state.workspace=null;
     if(table==="certificate_templates"){state.certificateConsole=null;state.certificateSettingsTemplates=[];state.certificateTemplateCanvases.clear()}
     if(table==="report_card_templates"){state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear()}
     if(topic.startsWith("user:")||table==="notifications") loadNotificationCount();
@@ -702,6 +702,7 @@
       reportTemplateRangeForClass,validateReportTemplateFile,normaliseTemplateCanvas,drawAssignedTemplateOverlay,drawPreferredTerminalReport,builtInReportTemplateCanvas,
       resolveReportTemplateMimeType,renderPdfTemplateBlob,subjectScoreBreakdown,closeModal,
       ordinalReportPosition,reportBodyFontName,reportBodyFontSize,reportBodyFontScale,reportSubjectPositionMap,
+      defaultGradingInterpretation,normaliseGradingGuide,defaultReportGradingGuide,drawDynamicGradingScale,reportGradingGuide,
       setBoot:value=>{state.boot=value},getState:()=>state
     });
   }
@@ -1503,9 +1504,9 @@
     const scales=state.academic.grading_scales||[];
     return `<section class="panel"><div class="panel-header"><div><h3>Grading Scales</h3><p>Scope-aware grade ranges and points</p></div>
       <button class="button primary small" id="addGrade">Add grade</button></div>
-      <div class="table-wrap"><table><thead><tr><th>Grade</th><th>Range</th><th>Remark</th><th>Point</th><th>Scope</th><th></th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>Grade</th><th>Range</th><th>Remark</th><th>Interpretation</th><th>Point</th><th>Scope</th><th></th></tr></thead><tbody>
         ${scales.map(row=>`<tr><td><strong>${esc(row.grade)}</strong></td><td>${number(row.min_mark,2)}–${number(row.max_mark,2)}</td>
-          <td>${esc(row.remark)}</td><td>${number(row.grade_point,2)}</td><td>${esc(gradeScope(row))}</td>
+          <td>${esc(row.remark)}</td><td>${esc(row.interpretation||defaultGradingInterpretation(row.grade,row.remark))}</td><td>${number(row.grade_point,2)}</td><td>${esc(gradeScope(row))}</td>
           <td><div class="table-actions"><button class="button ghost small" data-edit-grade="${row.id}">Edit</button>
             <button class="button danger small" data-delete-grade="${row.id}">Remove</button></div></td></tr>`).join("")}
       </tbody></table></div></section>`;
@@ -1516,6 +1517,57 @@
       (state.academic.classes||[]).find(x=>x.id===row.class_id)?.name,
       (state.academic.subjects||[]).find(x=>x.id===row.subject_id)?.name
     ].filter(Boolean).join(" • ")||"School-wide";
+  }
+  function defaultGradingInterpretation(grade="",remark="") {
+    const key=String(remark||"").trim().toLowerCase(),value=String(grade||"").trim();
+    if(key==="excellent"||value==="1")return "Outstanding performance. Keep it up!";
+    if(key==="very good"||value==="2")return "Well above average. You are doing great!";
+    if(key==="good"||value==="3")return "Good achievement. Continue to work hard.";
+    if(key==="high average"||value==="4")return "Satisfactory performance. Aim higher.";
+    if(key==="average"||value==="5")return "Fair performance. More effort needed.";
+    if(key==="low average"||value==="6")return "Below average. Focus and improvement required.";
+    if(key==="pass"||value==="7")return "Minimum pass. Consistent effort is essential.";
+    if(["weak","week"].includes(key)||value==="8")return "Weak performance. Urgent improvement needed.";
+    if(key==="needs improvement"||value==="9")return "Unsatisfactory. Serious improvement is required.";
+    return `${remark||"Performance recorded"}. Continue working consistently to improve performance.`;
+  }
+  function normaliseGradingGuide(guide={}) {
+    const rows=(Array.isArray(guide?.rows)?guide.rows:[]).map((row,index)=>({
+      ...row,grade:String(row.grade??""),min_mark:Number(row.min_mark??0),max_mark:Number(row.max_mark??0),
+      remark:String(row.remark??""),interpretation:String(row.interpretation||defaultGradingInterpretation(row.grade,row.remark)),
+      display_order:Number(row.display_order??index+1)
+    })).sort((a,b)=>a.display_order-b.display_order||b.min_mark-a.min_mark);
+    return {...guide,rows,scope:guide?.scope||{},subject_exceptions:Array.isArray(guide?.subject_exceptions)?guide.subject_exceptions:[]};
+  }
+  function defaultReportGradingGuide() {
+    const rows=[
+      ["1",90,100,"Excellent","Outstanding performance. Keep it up!"],
+      ["2",80,89,"Very Good","Well above average. You are doing great!"],
+      ["3",70,79,"Good","Good achievement. Continue to work hard."],
+      ["4",60,69,"High Average","Satisfactory performance. Aim higher."],
+      ["5",55,59,"Average","Fair performance. More effort needed."],
+      ["6",50,54,"Low Average","Below average. Focus and improvement required."],
+      ["7",46,49,"Pass","Minimum pass. Consistent effort is essential."],
+      ["8",40,45,"Weak","Weak performance. Urgent improvement needed."],
+      ["9",0,39,"Needs improvement","Unsatisfactory. Serious improvement is required."]
+    ].map((item,index)=>({grade:item[0],min_mark:item[1],max_mark:item[2],remark:item[3],interpretation:item[4],display_order:index+1}));
+    return {version:1,scope:{label:"School-wide default"},rows,subject_exceptions:[]};
+  }
+  async function enrichReportGradingGuide(editor) {
+    if(!editor)return editor;
+    try{
+      editor.grading_scale=normaliseGradingGuide(await rpc("get_report_grading_guide",{
+        target_report_id:editor.report?.id||null,
+        target_enrollment_id:editor.report?.id?null:editor.report?.enrollment_id||null,
+        target_term_id:editor.report?.id?null:editor.report?.term_id||null
+      }));
+      editor.grading_scale_error="";
+    }catch(error){
+      await reportClientError(error,{source:"report_grading_guide",report_id:editor.report?.id||null});
+      editor.grading_scale=defaultReportGradingGuide();
+      editor.grading_scale_error=friendlyError(error);
+    }
+    return editor;
   }
   const PROMOTION_ALL_CLASSES="__all_eligible_classes__";
   function promotionCutoffOptions(selected=50) {
@@ -1919,6 +1971,7 @@
       <label class="field"><span>Minimum mark</span><input type="number" min="0" max="100" step=".01" name="min_mark" value="${attr(row.min_mark??"")}" required></label>
       <label class="field"><span>Maximum mark</span><input type="number" min="0" max="100" step=".01" name="max_mark" value="${attr(row.max_mark??"")}" required></label>
       <label class="field"><span>Remark</span><input name="remark" value="${attr(row.remark||"")}" required></label>
+      <label class="field full"><span>Interpretation guide</span><textarea name="interpretation" maxlength="180" required>${esc(row.interpretation||defaultGradingInterpretation(row.grade,row.remark))}</textarea><small>This text is printed dynamically on new and formally reopened reports.</small></label>
       <label class="field"><span>Grade point</span><input type="number" step=".01" name="grade_point" value="${attr(row.grade_point||0)}"></label>
       <label class="field"><span>Display order</span><input type="number" name="display_order" value="${attr(row.display_order||0)}"></label>
       <label class="field"><span>Academic year</span><select name="academic_year_id">${optionList(state.academic.academic_years||[],"id","name",row.academic_year_id,"All years")}</select></label>
@@ -1928,7 +1981,7 @@
     byId("gradeCancel").onclick=closeModal;
     byId("gradeSave").onclick=async()=>{
       const form=byId("gradeForm");if(!form?.reportValidity())return;
-      const v=formObject(form),record={id:id||null,grade:v.grade,remark:v.remark,min_mark:Number(v.min_mark),max_mark:Number(v.max_mark),
+      const v=formObject(form),record={id:id||null,grade:v.grade,remark:v.remark,interpretation:v.interpretation,min_mark:Number(v.min_mark),max_mark:Number(v.max_mark),
         grade_point:Number(v.grade_point||0),display_order:Number(v.display_order||0),academic_year_id:v.academic_year_id||null,class_id:v.class_id||null,subject_id:v.subject_id||null,reason:id?"Grading scale updated":"Grading scale created"};
       const button=byId("gradeSave");button.disabled=true;
       let saved=false;
@@ -2061,6 +2114,7 @@
       const reportId=ids[index];
       try{
         const editor=await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:null,target_term_id:null});
+        await enrichReportGradingGuide(editor);
         const publication=(editor.publications||[]).find(item=>!item.revoked_at);
         if(!publication)throw new Error("Active publication record not found");
         await createAndStoreOfficialPdf(editor,publication);created+=1;
@@ -2218,6 +2272,7 @@
     try {
       const editor=await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:enrollmentId,target_term_id:termId});
       await enrichReportPromotion(editor);
+      await enrichReportGradingGuide(editor);
       state.reportEditor=editor;
       state.view="reports";renderNav();
       renderReportEditor();
@@ -2235,6 +2290,7 @@
     try{
       const latest=await rpc("get_report_editor",{target_report_id:state.reportEditor.report.id,target_enrollment_id:null,target_term_id:null});
       await enrichReportPromotion(latest);
+      await enrichReportGradingGuide(latest);
       if(state.reportEditor&&Number(latest.report.version)>Number(state.reportEditor.report.version)) {
         state.reportEditor=latest;renderReportEditor();toast("Report refreshed","A newer version was received.","warning");
       }
@@ -2260,7 +2316,7 @@
       <div class="report-layout">
         <section class="panel">
           <div class="panel-header"><div><h3>Assessment Record</h3><p>${statusBadge(report.status)}</p></div>
-            <div class="button-row">${locked?`<span class="chip">Read only</span>`:`<span class="chip">Version ${number(report.version||0)}</span>`}</div></div>
+            <div class="button-row"><span class="chip" title="The grading guide printed on this report">${esc(editor.grading_scale?.scope?.label||"Grading guide")}</span>${locked?`<span class="chip">Read only</span>`:`<span class="chip">Version ${number(report.version||0)}</span>`}</div></div>
           <div class="panel-body">
             <form id="reportForm" class="form-stack">
               <div class="form-grid three">
@@ -2452,7 +2508,7 @@
           else throw error;
         }
       }
-      if(saved?.report){await enrichReportPromotion(saved);state.workspace=null;state.reportEditor=saved;renderReportEditor()}
+      if(saved?.report){await enrichReportPromotion(saved);await enrichReportGradingGuide(saved);state.workspace=null;state.reportEditor=saved;renderReportEditor()}
       const key=`report:${payload.report_id||`${payload.enrollment_id}:${payload.term_id}`}`;await draftDelete(key).catch(()=>{});
       if(persisted)toast("Report saved");
     } catch(error){
@@ -2473,6 +2529,7 @@
         const updated=await rpc("transition_report_status",{target_report_id:state.reportEditor.report.id,target_status:targetStatus,
           comment_text:comment,expected_version:state.reportEditor.report.version});
         await enrichReportPromotion(updated);
+        await enrichReportGradingGuide(updated);
         state.workspace=null;state.reportEditor=updated;closeModal();toast("Report status updated");
         renderReportEditor();
         if(targetStatus==="published")await generateAndUploadOfficialPdf();
@@ -2572,6 +2629,8 @@
       setLoading(true);
       try{
         const pdf=await createManualReportTemplatePdf({
+          academicYearId:year?.id||null,
+          classId:classRow?.id||null,
           academicYearName:year?.name||"",
           termName:term?.name||"",
           className:classRow?.name||"",
@@ -2659,6 +2718,7 @@
         completed+=1;progressText.textContent=`Preparing ${completed} of ${rows.length}: ${row.student_name||row.report_number||"report"}`;
         try{
           const editor=await rpc("get_report_editor",{target_report_id:row.id,target_enrollment_id:null,target_term_id:null});
+          await enrichReportGradingGuide(editor);
           const publication=(editor.publications||[]).find(item=>!item.revoked_at);
           if(!publication)throw new Error("Active publication record not found");
           let pdf,storageStatus="downloaded_latest_not_stored";
@@ -2733,6 +2793,7 @@
     for(const row of rows){
       try{
         const editor=await rpc("get_report_editor",{target_report_id:row.id,target_enrollment_id:null,target_term_id:null});
+        await enrichReportGradingGuide(editor);
         const publication=(editor.publications||[]).find(item=>!item.revoked_at);
         if(!publication)continue;
         await createAndStoreOfficialPdf(editor,publication);updated+=1;
@@ -2750,6 +2811,7 @@
     try{
       const {pdf,safeName}=await createAndStoreOfficialPdf(editor,publication);
       state.reportEditor=await rpc("get_report_editor",{target_report_id:editor.report.id,target_enrollment_id:null,target_term_id:null});
+      await enrichReportGradingGuide(state.reportEditor);
       renderReportEditor();downloadBlob(`${safeName}.pdf`,pdf);toast("Official PDF created");
     }catch(error){toast("PDF not created",friendlyError(error),"error");await reportClientError(error,{source:"pdf",report_id:editor.report.id})}
     finally{setLoading(false)}
@@ -2770,6 +2832,7 @@
         pdf=generated.pdf;safeName=generated.safeName;
         if(state.reportEditor?.report?.id===reportId){
           state.reportEditor=await rpc("get_report_editor",{target_report_id:reportId,target_enrollment_id:null,target_term_id:null});
+          await enrichReportGradingGuide(state.reportEditor);
           renderReportEditor();
         }
       }else{
@@ -3223,6 +3286,16 @@
     return size;
   }
 
+  function fitReportTextValue(ctx,text,maxWidth,preferredSize=22,minimumSize=10,weight="normal") {
+    const value=String(text??"");
+    let size=fitReportText(ctx,value,maxWidth,preferredSize,minimumSize,weight);
+    setReportFont(ctx,size,weight);
+    if(ctx.measureText(value).width<=maxWidth)return {text:value,size};
+    let shortened=value;
+    while(shortened.length>1&&ctx.measureText(`${shortened}…`).width>maxWidth)shortened=shortened.slice(0,-1);
+    return {text:`${shortened.trimEnd()}…`,size};
+  }
+
   function drawReportCellText(ctx,text,x1,x2,yCenter,{align="left",preferredSize=21,minimumSize=13,weight="normal",colour="#172238"}={}) {
     const value=String(text??"");
     fitReportText(ctx,value,Math.max(10,x2-x1-16),preferredSize,minimumSize,weight);
@@ -3379,6 +3452,76 @@
   }
 
 
+  function reportGradingGuide(report={},templateMeta={}) {
+    return normaliseGradingGuide(report.grading_scale_guide||templateMeta.gradingGuide||defaultReportGradingGuide());
+  }
+  function gradingGuideRangeText(row={}) {
+    return `${number(row.min_mark,2)} - ${number(row.max_mark,2)}`;
+  }
+  function gradingGuideColour(row,index) {
+    const standard=["#2eb24a","#8bc63f","#2d86c6","#7750ac","#ff9f0a","#ff9f0a","#f36c21","#ef3b35","#d8092f"];
+    return standard[index%standard.length];
+  }
+  function wrapAllReportText(ctx,text,maxWidth) {
+    const words=String(text||"").trim().split(/\s+/).filter(Boolean),lines=[];let line="";
+    for(const word of words){
+      const test=line?`${line} ${word}`:word;
+      if(line&&ctx.measureText(test).width>maxWidth){lines.push(line);line=word}else line=test;
+    }
+    if(line)lines.push(line);
+    return lines;
+  }
+  function drawGradingInterpretationCell(ctx,text,x1,x2,y1,y2) {
+    const value=String(text||""),maxWidth=Math.max(10,x2-x1-16),maxLines=3;let size=11,lines=[];
+    while(size>=5.5){
+      setReportFont(ctx,size,"normal");lines=wrapAllReportText(ctx,value,maxWidth);
+      if(lines.length<=maxLines)break;
+      size-=.5;
+    }
+    if(lines.length>maxLines){
+      lines=lines.slice(0,maxLines);let last=lines[maxLines-1]||"";
+      while(last.length>1&&ctx.measureText(`${last}…`).width>maxWidth)last=last.slice(0,-1);
+      lines[maxLines-1]=`${last.trimEnd()}…`;
+    }
+    ctx.fillStyle="#17233b";ctx.textBaseline="middle";
+    const lineHeight=size*reportBodyFontScale()*1.05,total=lineHeight*lines.length;let y=y1+(y2-y1-total)/2+lineHeight/2;
+    lines.forEach(line=>{ctx.fillText(line,x1+8,y);y+=lineHeight});ctx.textBaseline="alphabetic";
+  }
+  function drawDynamicGradingScale(ctx,guide,{x=38,y=1244,width=832,height=390,manual=false}={}) {
+    const resolved=normaliseGradingGuide(guide),rows=resolved.rows.length?resolved.rows:defaultReportGradingGuide().rows;
+    const titleHeight=44,scopeHeight=24,headerHeight=34,bodyHeight=Math.max(120,height-titleHeight-scopeHeight-headerHeight);
+    const rowHeight=bodyHeight/Math.max(1,rows.length),columns=[x,x+100,x+283,x+483,x+width];
+    ctx.save();ctx.fillStyle="#ffffff";ctx.fillRect(x-2,y-2,width+4,height+4);
+    ctx.strokeStyle="#123a79";ctx.lineWidth=1.5;ctx.strokeRect(x,y,width,height);
+    ctx.fillStyle="#123a79";ctx.fillRect(x,y,width,titleHeight);
+    ctx.fillStyle="#ffffff";setReportFont(ctx,20,"bold");drawCenteredReportText(ctx,"GRADING SCALE [Interpretation Guide]",x,x+width,y+29);
+    const exceptions=(resolved.subject_exceptions||[]).map(item=>item.subject_name).filter(Boolean);
+    const exceptionText=exceptions.length?` • Subject-specific exceptions: ${exceptions.join(", ")}`:"";
+    const scopeText=`Scope: ${resolved.scope?.label||"School-wide default"}${exceptionText}`;
+    ctx.fillStyle="#eef4fb";ctx.fillRect(x,y+titleHeight,width,scopeHeight);
+    ctx.fillStyle="#334967";const fittedScope=fitReportTextValue(ctx,scopeText,width-14,13,9,"normal");setReportFont(ctx,fittedScope.size,"normal");ctx.fillText(fittedScope.text,x+7,y+titleHeight+17);
+    const headerY=y+titleHeight+scopeHeight;
+    ctx.fillStyle="#dce8f6";ctx.fillRect(x,headerY,width,headerHeight);
+    ctx.strokeStyle="#76869c";ctx.lineWidth=.8;
+    ctx.beginPath();columns.forEach(value=>{ctx.moveTo(value,headerY);ctx.lineTo(value,y+height)});ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x,headerY);ctx.lineTo(x+width,headerY);ctx.moveTo(x,headerY+headerHeight);ctx.lineTo(x+width,headerY+headerHeight);ctx.stroke();
+    const headings=["GRADE","RANGE (%)","REMARK","INTERPRETATION"];
+    ctx.fillStyle="#17233b";setReportFont(ctx,13,"bold");ctx.textBaseline="middle";
+    headings.forEach((label,index)=>drawCenteredReportText(ctx,label,columns[index],columns[index+1],headerY+headerHeight/2));
+    let rowY=headerY+headerHeight;
+    rows.forEach((row,index)=>{
+      const nextY=index===rows.length-1?y+height:rowY+rowHeight;
+      ctx.fillStyle=gradingGuideColour(row,index);ctx.fillRect(columns[0],rowY,columns[1]-columns[0],nextY-rowY);
+      ctx.fillStyle="#ffffff";setReportFont(ctx,Math.min(16,Math.max(10,rowHeight*.43)),"bold");drawCenteredReportText(ctx,manual?String(row.grade||""):String(row.grade||""),columns[0],columns[1],(rowY+nextY)/2);
+      drawReportCellText(ctx,gradingGuideRangeText(row),columns[1],columns[2],(rowY+nextY)/2,{align:"center",preferredSize:13,minimumSize:8,colour:"#17233b"});
+      drawReportCellText(ctx,row.remark||"",columns[2],columns[3],(rowY+nextY)/2,{align:"center",preferredSize:13,minimumSize:8,weight:"bold",colour:gradingGuideColour(row,index)});
+      drawGradingInterpretationCell(ctx,row.interpretation||defaultGradingInterpretation(row.grade,row.remark),columns[3],columns[4],rowY,nextY);
+      ctx.strokeStyle="#76869c";ctx.lineWidth=.65;ctx.beginPath();ctx.moveTo(x,nextY);ctx.lineTo(x+width,nextY);ctx.stroke();
+      rowY=nextY;
+    });
+    ctx.textBaseline="alphabetic";ctx.restore();
+  }
+
   async function drawAssignedTemplateOverlay(ctx,canvas,{student={},report={},subjects=[],publication=null,manual=false,templateMeta={},assets={}}={}) {
     const school=state.boot.school||{},ink="#17233b",summaryPale="#eef4fb";
     const {logo,signer={},signatureImage,studentPhotoImage}=assets;
@@ -3399,8 +3542,8 @@
 
     ctx.textBaseline="alphabetic";
 
-    // Clear only dynamic fields. Static branding, headings, grading scale and
-    // the How to Read Your Report panel remain exactly as designed.
+    // Clear dynamic report fields. The grading-scale panel is redrawn from the
+    // active or frozen academic configuration, while the How to Read panel remains.
     ctx.fillStyle="#ffffff";
     ctx.fillRect(38,232,1164,105);
     ctx.fillRect(tableLeft-1,bodyTop+1,tableRight-tableLeft+2,tableBottom-bodyTop-1);
@@ -3492,6 +3635,7 @@
     ctx.fillStyle="#5f708b";setReportFont(ctx,14,"normal");ctx.fillText(`Report No.: ${reportCode}${manual?"...":""}`,38,1218);
     const manualYear=(String(templateMeta.academicYearName||"").match(/\d{4}\s*$/)||[])[0]||String(new Date().getFullYear());
     drawRightReportText(ctx,manual?`Date Issued: .../.../${manualYear}`:`Date Issued: ${reportDate(publication?.published_at||new Date())}`,1200,1218);
+    drawDynamicGradingScale(ctx,reportGradingGuide(report,templateMeta),{x:38,y:1244,width:832,height:390,manual});
     return canvas;
   }
 
@@ -3658,21 +3802,32 @@
     const assets=await resolveReportImageAssets({
       reportId:editor.report?.id||null,manual:false,studentPhotoPath:editor.student?.photo_url||"",className:editor.student?.class_name||""
     });
+    if(!editor.report?.id)throw new Error("The report must be saved before an official PDF can be generated.");
+    let gradingGuide;
+    try{
+      gradingGuide=normaliseGradingGuide(await rpc("get_report_grading_guide",{target_report_id:editor.report.id,target_enrollment_id:null,target_term_id:null}));
+    }catch(error){
+      throw new Error("The official PDF cannot be generated until the report has a valid grading guide. Verify Academic Configuration and try again.",{cause:error});
+    }
+    if(!gradingGuide.rows.length)throw new Error("The official PDF cannot be generated because the applicable grading guide contains no active ranges.");
     const canvas=await drawPreferredTerminalReport({
-      student:editor.student||{},report:editor.report||{},subjects:editor.subjects||[],publication,manual:false,assets
+      student:editor.student||{},report:{...(editor.report||{}),grading_scale_guide:gradingGuide},subjects:editor.subjects||[],publication,manual:false,assets
     });
     const jpeg=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",.97));
     return imagePdf(jpeg,595.28,841.89);
   }
 
-  async function createManualReportTemplatePdf({academicYearName="",termName="",className="",subjects=[]}={}) {
+  async function createManualReportTemplatePdf({academicYearId=null,classId=null,academicYearName="",termName="",className="",subjects=[]}={}) {
     const assets=await resolveReportImageAssets({manual:true,className});
+    const gradingGuide=academicYearId&&classId
+      ?normaliseGradingGuide(await rpc("resolve_grading_guide",{target_academic_year_id:academicYearId,target_class_id:classId}).catch(()=>defaultReportGradingGuide()))
+      :defaultReportGradingGuide();
     const templateSubjects=subjects.map(subject=>({
       subject_id:subject.id,subject_name:subject.name,subject_code:subject.code,total_score:null,grade:"",remark:"",components:[]
     }));
     const canvas=await drawPreferredTerminalReport({
       student:{},report:{days_present:null,days_school_opened:null,attitude:"",conduct:"",interest:"",teacher_comment:"",head_comment:""},
-      subjects:templateSubjects,publication:null,manual:true,templateMeta:{academicYearName,termName,className},assets
+      subjects:templateSubjects,publication:null,manual:true,templateMeta:{academicYearName,termName,className,gradingGuide},assets
     });
     const jpeg=await new Promise(resolve=>canvas.toBlob(resolve,"image/jpeg",.97));
     return imagePdf(jpeg,595.28,841.89);
@@ -4737,7 +4892,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.1 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.2 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5001,7 +5156,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.1 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.2 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5032,7 +5187,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.1 final production-audit hardening
+  // Report Card Enterprise v7.2.2 Final dynamic grading-guide release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5306,7 +5461,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_1_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_2_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5386,7 +5541,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.1 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.2 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
