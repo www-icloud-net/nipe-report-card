@@ -2951,6 +2951,14 @@
     if(bytes.length<5||signature!=="%PDF-")throw new Error(`${label} is not a valid PDF file.`);
     return new Blob([bytes],{type:"application/pdf"});
   }
+  async function downloadStoredCertificatePdfBlob(certificate,label="The stored official certificate PDF") {
+    const path=certificate?.pdf_storage_path||"";
+    if(!path)throw new Error("No stored official certificate PDF is registered for this certificate.");
+    const blob=await downloadPrivateStorageBlob(CONFIG.certificatePdfBucket,path,label,4),bytes=new Uint8Array(await blob.arrayBuffer());
+    const signature=String.fromCharCode(...bytes.slice(0,5));
+    if(bytes.length<5||signature!=="%PDF-")throw new Error(`${label} is not a valid PDF file.`);
+    return new Blob([bytes],{type:"application/pdf"});
+  }
   function drawImageContain(ctx,image,x,y,width,height) {
     const scale=Math.min(width/image.width,height/image.height),drawWidth=image.width*scale,drawHeight=image.height*scale;ctx.drawImage(image,x+(width-drawWidth)/2,y+(height-drawHeight)/2,drawWidth,drawHeight);
   }
@@ -5017,7 +5025,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.4 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.5 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5281,7 +5289,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.4 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.5 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5322,7 +5330,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.4 Final report-PDF storage access and fallback reliability release
+  // Report Card Enterprise v7.2.5 Final production audit and package integrity release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5594,9 +5602,58 @@
   }
   function wrappedTextLines(ctx,text,maxWidth){const words=String(text||"").split(/\s+/).filter(Boolean),lines=[];let line="";for(const word of words){const next=line?`${line} ${word}`:word;if(ctx.measureText(next).width>maxWidth&&line){lines.push(line);line=word}else line=next}if(line)lines.push(line);return lines}
   async function createAndStoreCertificatePdf(data,certificate){if(role()!=="system_admin")throw new Error("Only the System Administrator can create official certificate PDFs");if(!certificate||certificate.status!=="issued")throw new Error("Only an issued certificate can have an official PDF");const pdf=await createCertificatePdf(data,certificate),checksum=await sha256(pdf),year=safeArchiveSegment(certificate.academic_year_name,"year"),safeNumber=safeArchiveSegment(certificate.certificate_number,"certificate"),path=`${data.batch.certificate_type}/${year}/${safeNumber}-r${certificate.revision_no}-${Date.now()}.pdf`,previous=certificate.pdf_storage_path||"";const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).upload(path,pdf,{contentType:"application/pdf",upsert:false,cacheControl:"31536000"});if(error)throw error;try{await rpc("register_certificate_pdf",{target_certificate_id:certificate.id,target_storage_path:path,target_checksum:checksum})}catch(error){await state.client.storage.from(CONFIG.certificatePdfBucket).remove([path]).catch(()=>{});throw error}if(previous&&previous!==path)await state.client.storage.from(CONFIG.certificatePdfBucket).remove([previous]).catch(()=>{});certificate.pdf_storage_path=path;certificate.pdf_sha256=checksum;return {pdf,path,checksum,fallbackUsed:Boolean(certificate.__usedBuiltInTemplateFallback),liveTemplateRecovered:Boolean(certificate.__usedLiveTemplateRecovery)}}
-  async function downloadStoredCertificatePdf(data,certificate){setLoading(true);try{let blob;if(role()==="system_admin"){blob=(await createAndStoreCertificatePdf(data,certificate)).pdf}else{if(!certificate.pdf_storage_path)throw new Error("Official certificate PDF has not been created");const url=await signedUrl(CONFIG.certificatePdfBucket,certificate.pdf_storage_path,300);const response=await fetch(url);if(!response.ok)throw new Error("Certificate PDF could not be downloaded");blob=await response.blob()}downloadBlob(`${safeArchiveSegment(certificate.certificate_number,"Certificate")}_${safeArchiveSegment(certificate.recipient_name,"Recipient")}.pdf`,blob);toast("Certificate downloaded")}catch(error){toast("Certificate unavailable",friendlyError(error),"error")}finally{setLoading(false)}}
-  async function generateCertificateBatchPdfs(data,downloadZip=true){if(!window.JSZip&&downloadZip)throw new Error("ZIP library unavailable");const issued=(data.certificates||[]).filter(item=>item.status==="issued"),zip=downloadZip?new window.JSZip():null,manifest=[];if(!issued.length)throw new Error("No issued certificates are available");for(let index=0;index<issued.length;index++){const cert=issued[index];try{let pdf;if(role()==="system_admin")pdf=(await createAndStoreCertificatePdf(data,cert)).pdf;else{if(!cert.pdf_storage_path)throw new Error("Official PDF not created");const url=await signedUrl(CONFIG.certificatePdfBucket,cert.pdf_storage_path,300),response=await fetch(url);if(!response.ok)throw new Error("PDF download failed");pdf=await response.blob()}const filename=`${safeArchiveSegment(cert.certificate_number,"Certificate")}_${safeArchiveSegment(cert.recipient_name,"Recipient")}.pdf`;if(zip)zip.file(filename,pdf);manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"included",file_name:filename,error:""})}catch(error){manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"failed",file_name:"",error:friendlyError(error)});await reportClientError(error,{source:"certificate_batch_pdf",certificate_id:cert.id})}}
-    if(zip){const headers=["certificate_number","recipient","status","file_name","error"];zip.file("CERTIFICATE_MANIFEST.csv",[headers.join(","),...manifest.map(row=>headers.map(key=>csvCell(row[key])).join(","))].join("\n"));const included=manifest.filter(row=>row.status==="included");if(!included.length)throw new Error("No certificate PDFs could be prepared");const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});downloadBlob(`${safeArchiveSegment(data.batch.title,"Certificates")}_${safeArchiveSegment(data.batch.academic_year_name,"Year")}.zip`,blob);toast("Certificate package downloaded",`${included.length} certificate PDF${included.length===1?"":"s"} included.`)}return manifest}
+  async function downloadStoredCertificatePdf(data,certificate){
+    setLoading(true);
+    try{
+      const blob=await downloadStoredCertificatePdfBlob(certificate);
+      downloadBlob(`${safeArchiveSegment(certificate.certificate_number,"Certificate")}_${safeArchiveSegment(certificate.recipient_name,"Recipient")}.pdf`,blob);
+      toast("Certificate downloaded","The frozen official certificate PDF was downloaded from secure Storage.");
+    }catch(error){
+      toast("Certificate unavailable",friendlyError(error),"error");
+      await reportClientError(error,{source:"certificate_pdf_download",certificate_id:certificate?.id||null});
+    }finally{setLoading(false)}
+  }
+  async function generateCertificateBatchPdfs(data,downloadZip=true){
+    if(!window.JSZip&&downloadZip)throw new Error("ZIP library unavailable");
+    const issued=(data.certificates||[]).filter(item=>item.status==="issued"),zip=downloadZip?new window.JSZip():null,manifest=[];
+    if(!issued.length)throw new Error("No issued certificates are available");
+    for(let index=0;index<issued.length;index++){
+      const cert=issued[index];
+      try{
+        let pdf,pdfSource="stored_official";
+        if(role()==="system_admin"){
+          try{
+            pdf=(await createAndStoreCertificatePdf(data,cert)).pdf;
+            pdfSource="refreshed";
+          }catch(refreshError){
+            await reportClientError(refreshError,{source:"certificate_batch_pdf_refresh",certificate_id:cert.id});
+            if(!cert.pdf_storage_path)throw refreshError;
+            pdf=await downloadStoredCertificatePdfBlob(cert);
+            pdfSource="stored_official_fallback";
+          }
+        }else{
+          pdf=await downloadStoredCertificatePdfBlob(cert);
+        }
+        const filename=`${safeArchiveSegment(cert.certificate_number,"Certificate")}_${safeArchiveSegment(cert.recipient_name,"Recipient")}.pdf`;
+        if(zip)zip.file(filename,pdf);
+        manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"included",pdf_source:pdfSource,file_name:filename,error:""});
+      }catch(error){
+        manifest.push({certificate_number:cert.certificate_number,recipient:cert.recipient_name,status:"failed",pdf_source:"unavailable",file_name:"",error:friendlyError(error)});
+        await reportClientError(error,{source:"certificate_batch_pdf",certificate_id:cert.id});
+      }
+    }
+    if(zip){
+      const headers=["certificate_number","recipient","status","pdf_source","file_name","error"];
+      zip.file("CERTIFICATE_MANIFEST.csv",[headers.join(","),...manifest.map(row=>headers.map(key=>csvCell(row[key])).join(","))].join("\r\n"));
+      const included=manifest.filter(row=>row.status==="included");
+      if(!included.length)throw new Error("No certificate PDFs could be prepared");
+      const blob=await zip.generateAsync({type:"blob",compression:"DEFLATE",compressionOptions:{level:6}});
+      downloadBlob(`${safeArchiveSegment(data.batch.title,"Certificates")}_${safeArchiveSegment(data.batch.academic_year_name,"Year")}.zip`,blob);
+      const fallbackCount=included.filter(row=>row.pdf_source==="stored_official_fallback").length;
+      toast(fallbackCount?"Certificate package downloaded with fallback":"Certificate package downloaded",`${included.length} certificate PDF${included.length===1?"":"s"} included${fallbackCount?` • ${fallbackCount} secure stored PDF${fallbackCount===1?"":"s"} used after refresh failure`:""}.`,fallbackCount?"warning":"success",8500);
+    }
+    return manifest;
+  }
 
 
   async function renderGithubNavigator(token,force=false) {
@@ -5612,7 +5669,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_4_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_5_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5696,7 +5753,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.4 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.5 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
