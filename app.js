@@ -602,8 +602,11 @@
     });
   }
   function renderNav() {
-    byId("mainNav").innerHTML=availableNavItems().map(item=>`<button class="nav-item ${item.id===state.view?"active":""}" data-view="${item.id}">
-      <span class="nav-icon">${item.icon}</span><span>${esc(item.label)}</span></button>`).join("");
+    byId("mainNav").innerHTML=availableNavItems().map(item=>{
+      const active=item.id===state.view;
+      return `<button type="button" class="nav-item ${active?"active":""}" data-view="${item.id}" aria-current="${active?"page":"false"}" aria-label="Open ${attr(item.label)}" title="${attr(item.subtitle||item.label)}">
+        <span class="nav-icon" aria-hidden="true">${item.icon}</span><span class="nav-label">${esc(item.label)}</span><span class="nav-active-dot" aria-hidden="true"></span></button>`;
+    }).join("");
     $$(".nav-item",byId("mainNav")).forEach(button=>button.onclick=()=>navigate(button.dataset.view));
   }
   async function navigate(view,force=false) {
@@ -2851,7 +2854,27 @@
     return [...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,"0")).join("");
   }
   async function loadImage(url) {
-    return new Promise((resolve,reject)=>{const image=new Image();image.crossOrigin="anonymous";image.onload=()=>resolve(image);image.onerror=reject;image.src=url});
+    return new Promise((resolve,reject)=>{const image=new Image();image.crossOrigin="anonymous";image.onload=()=>resolve(image);image.onerror=()=>reject(new Error("Image could not be decoded"));image.src=url});
+  }
+  async function loadPrivateImageAsset(bucket,path,label="Private image") {
+    if(!path)return null;
+    let lastError=null;
+    for(let attempt=0;attempt<2;attempt+=1){
+      try{
+        const {data,error}=await state.client.storage.from(bucket).download(path);
+        if(error||!data)throw error||new Error("Storage file is unavailable");
+        const objectUrl=URL.createObjectURL(data);
+        try{return await loadImage(objectUrl)}finally{URL.revokeObjectURL(objectUrl)}
+      }catch(error){lastError=error}
+      try{
+        const cache=bucket===CONFIG.signatureBucket?state.signatureUrls:bucket===CONFIG.photoBucket?state.photoUrls:state.pdfUrls;
+        cache?.delete?.(path);
+        const image=await loadImage(await signedUrl(bucket,path,900));
+        if(image)return image;
+      }catch(error){lastError=error}
+      if(attempt===0)await sleep(180);
+    }
+    throw new Error(`${label} could not be loaded from secure Storage. Restore or re-upload the file and try again.`,{cause:lastError});
   }
   function drawImageContain(ctx,image,x,y,width,height) {
     const scale=Math.min(width/image.width,height/image.height),drawWidth=image.width*scale,drawHeight=image.height*scale;ctx.drawImage(image,x+(width-drawWidth)/2,y+(height-drawHeight)/2,drawWidth,drawHeight);
@@ -3359,14 +3382,27 @@
   async function resolveReportImageAssets({reportId=null,manual=false,studentPhotoPath="",className=""}={}) {
     const school=state.boot.school||{};
     const logo=await loadImage(school.logo_url?.startsWith("http")?school.logo_url:CONFIG.logoPath).catch(()=>null);
-    const signer=await rpc("get_current_principal_signature")
-      .catch(()=>({full_name:school.head_name||"Principal",signature_path:""}));
-    let signatureImage=null,studentPhotoImage=null;
-    if(signer.signature_path){
-      try{signatureImage=await loadImage(await signedUrl(CONFIG.signatureBucket,signer.signature_path,900))}catch(_){signatureImage=null}
+    let signer=null,currentSigner=null;
+    if(reportId){
+      signer=await rpc("get_report_headteacher_signature",{target_report_id:reportId}).catch(()=>null);
+    }
+    currentSigner=await rpc("get_current_principal_signature").catch(()=>({full_name:school.head_name||"Principal",signature_path:""}));
+    if(!signer?.full_name)signer=currentSigner;
+    let signatureImage=null,studentPhotoImage=null,signatureError=null;
+    if(signer?.signature_path){
+      try{signatureImage=await loadPrivateImageAsset(CONFIG.signatureBucket,signer.signature_path,"The Principal signature")}
+      catch(error){signatureError=error}
+    }
+    if(!signatureImage&&currentSigner?.signature_path&&currentSigner.signature_path!==signer?.signature_path){
+      try{signatureImage=await loadPrivateImageAsset(CONFIG.signatureBucket,currentSigner.signature_path,"The current Principal signature");signer=currentSigner}
+      catch(error){signatureError=error}
+    }
+    if(!signatureImage&&!manual){
+      if(signatureError)throw signatureError;
+      throw new Error("The official report PDF requires an uploaded Principal signature. Ask the active Principal to upload the signature, then try again.");
     }
     if(!manual&&studentPhotoPath){
-      try{studentPhotoImage=await loadImage(await signedUrl(CONFIG.photoBucket,studentPhotoPath,900))}
+      try{studentPhotoImage=await loadPrivateImageAsset(CONFIG.photoBucket,studentPhotoPath,"The student photograph")}
       catch(error){throw new Error("The student photograph could not be loaded for the official PDF. Verify the student photo and try again.",{cause:error})}
     }
     const assignedTemplate=await resolveAssignedReportTemplate(className);
@@ -4597,7 +4633,8 @@
     const plans=data.plans||[],usage=data.usage||{},locks=data.active_locks||[],events=data.recent_events||[],admins=data.platform_admins||[];
     const status=snapshot.computed_status||license.status||"unknown";
     byId("content").innerHTML=`
-      <div class="page-head"><div><h3>Platform Licensing Control</h3><p>Manage the installation licence, compliance state, capacity, and access restrictions.</p></div><button class="button ghost" id="licenseRefresh">Refresh</button></div>
+      <div class="page-head platform-page-head"><div><h3>Platform Licensing Control</h3><p>Manage the installation licence, compliance state, capacity, and access restrictions.</p></div><button class="button ghost" id="licenseRefresh">Refresh</button></div>
+      ${platformSectionTabs("licensing")}
       <section class="platform-control-hero ${snapshot.access_mode==='locked'?'locked':snapshot.access_mode==='read_only'?'restricted':'active'}">
         <div><span>Current licence</span><h3>${esc(plan.name||"Unconfigured")}</h3><p>${esc(snapshot.license_reference||"No licence reference")}</p></div>
         <div><span>Status</span><strong>${esc(licenseStatusLabel(status))}</strong><small>${esc(snapshot.access_lock_status||"unlocked")}</small></div>
@@ -4652,13 +4689,15 @@
           <div class="template-information"><strong>Account provisioning</strong><span>Create a separate Supabase Authentication user, then run PLATFORM_SUPER_ADMIN_SETUP.sql with that user’s email. School System Administrators cannot grant themselves this role.</span></div>
         </section>
       </div>
-      <section class="panel">
-        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 100 immutable platform events</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Actor</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(platformEventSummary(item))}</strong></td><td>${esc(item.event_reason||"—")}</td><td>${esc(item.actor_name||item.actor_id||"System")}</td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No licensing events recorded</div></td></tr>`}</tbody></table></div>
+      <section class="panel platform-history-panel">
+        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 100 platform events</p></div><div class="button-row"><button class="button danger small" id="licenseHistoryClear" type="button" ${events.length?"":"disabled"}>Clear all history</button></div></div>
+        <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Actor</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(platformEventSummary(item))}</strong></td><td>${esc(item.event_reason||"—")}</td><td>${esc(item.actor_name||item.actor_id||"System")}</td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No licensing events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
+    bindPlatformSectionTabs();
     byId("licenseRefresh").onclick=()=>{state.licenseConsole=null;renderLicensing(state.viewToken,true)};
     byId("platformLicenseSave").onclick=savePlatformLicense;
     byId("platformLockApply").onclick=applyPlatformAccessLock;
+    byId("licenseHistoryClear")?.addEventListener("click",clearPlatformLicenseHistory);
     $$('[data-release-license-lock]').forEach(button=>button.onclick=()=>releasePlatformAccessLock(button.dataset.releaseLicenseLock));
   }
   async function savePlatformLicense() {
@@ -4686,6 +4725,17 @@
     const ok=await confirmAction("Release access lock","School access will return to the level allowed by the current licence status.","Release lock");if(!ok)return;
     try{state.licenseConsole=await rpc("platform_release_access_lock",{target_lock_id:lockId,reason_text:"Access lock released through the Platform Licensing portal"});toast("Access lock released");await renderLicensing(state.viewToken)}
     catch(error){toast("Lock not released",friendlyError(error),"error",7500)}
+  }
+  function clearPlatformLicenseHistory(){
+    modal("Clear Licence and Compliance History","This permanently removes all licence events and licence-verification logs. Current licence settings and active locks are not changed.",`<div class="destructive-confirmation"><label class="field"><span>Reason</span><textarea id="licenseHistoryClearReason" minlength="5" required placeholder="Why is this history being cleared?"></textarea></label><label class="field"><span>Type CLEAR to confirm</span><input id="licenseHistoryClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="licenseHistoryClearCancel" type="button">Cancel</button><button class="button danger" id="licenseHistoryClearConfirm" type="button">Clear permanently</button>`,"small");
+    byId("licenseHistoryClearCancel").onclick=closeModal;
+    byId("licenseHistoryClearConfirm").onclick=async()=>{
+      const reason=byId("licenseHistoryClearReason").value.trim(),confirmation=byId("licenseHistoryClearText").value.trim();
+      if(reason.length<5||confirmation!=="CLEAR"){toast("History not cleared","Enter a reason and type CLEAR exactly.","error");return}
+      const button=byId("licenseHistoryClearConfirm");button.disabled=true;button.textContent="Clearing";
+      try{state.licenseConsole=await rpc("platform_clear_license_history",{reason_text:reason,confirmation_text:confirmation});closeModal();toast("Licence history cleared");await renderLicensing(state.viewToken)}
+      catch(error){toast("History not cleared",friendlyError(error),"error",8000)}finally{button.disabled=false;button.textContent="Clear permanently"}
+    };
   }
 
   async function renderSettings(token) {
@@ -4892,7 +4942,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.2 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.3 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5156,7 +5206,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.2 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.3 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5185,9 +5235,19 @@
     if(value==="revoked")return '<span class="status rejected">Revoked</span>';
     return `<span class="status draft">${esc(value||"Unknown")}</span>`;
   }
+  function platformSectionTabs(active="licensing") {
+    const items=[
+      {id:"licensing",label:"Platform Licensing",icon:"◇"},
+      {id:"github",label:"GitHub Navigator",icon:"⌁"}
+    ];
+    return `<div class="tabs platform-tabs" role="tablist" aria-label="Platform Super Administrator sections">${items.map(item=>`<button type="button" class="tab ${item.id===active?"active":""}" data-platform-section="${item.id}" role="tab" aria-selected="${item.id===active}"><span aria-hidden="true">${item.icon}</span>${esc(item.label)}</button>`).join("")}</div>`;
+  }
+  function bindPlatformSectionTabs(){
+    $$('[data-platform-section]').forEach(button=>button.onclick=()=>navigate(button.dataset.platformSection));
+  }
 
 
-  // Report Card Enterprise v7.2.2 Final dynamic grading-guide release
+  // Report Card Enterprise v7.2.3 Final platform-control and signature-reliability release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5414,7 +5474,22 @@
     }
     let logo=null,signature=null;
     try{logo=await loadImage(schoolDisplayLogo(school))}catch(_){}
-    try{if(principal.signature_path)signature=await loadImage(await signedUrl(CONFIG.signatureBucket,principal.signature_path,900))}catch(_){}
+    let certificateSignatureError=null;
+    if(principal.signature_path){
+      try{signature=await loadPrivateImageAsset(CONFIG.signatureBucket,principal.signature_path,"The Principal signature")}
+      catch(error){certificateSignatureError=error}
+    }
+    if(!signature){
+      const currentPrincipal=await rpc("get_current_principal_signature").catch(()=>null);
+      if(currentPrincipal?.signature_path&&currentPrincipal.signature_path!==principal.signature_path){
+        try{signature=await loadPrivateImageAsset(CONFIG.signatureBucket,currentPrincipal.signature_path,"The current Principal signature");principal.full_name=currentPrincipal.full_name||principal.full_name}
+        catch(error){certificateSignatureError=error}
+      }
+    }
+    if(!signature){
+      if(certificateSignatureError)throw certificateSignatureError;
+      throw new Error("The certificate cannot be generated until an active Principal signature is uploaded.");
+    }
     if(!uploadedTemplateApplied&&logo){ctx.save();ctx.globalAlpha=.06;drawImageContain(ctx,logo,527,300,700,700);ctx.restore()}
     if(logo)drawImageContain(ctx,logo,757,92,240,170);
     ctx.textAlign="center";ctx.fillStyle=primary;ctx.font='bold 44px Georgia, "Times New Roman", serif';ctx.fillText(String(school.school_name||schoolDisplayName()).toUpperCase(),877,292);
@@ -5455,13 +5530,14 @@
     if(token!==state.viewToken)return;
     const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[];
     byId("content").innerHTML=`
-      <div class="page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
+      <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
+      ${platformSectionTabs("github")}
       <section class="license-banner warning"><div><strong>Protected platform operation</strong><span>School System Administrators cannot view this section, call the package service, access private package buckets, or download reusable source packages.</span></div></section>
-      <div class="grid two package-generator-layout">
+      <div class="platform-package-workspace">
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_2_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_3_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5500,18 +5576,19 @@
           </form>
         </section>
       </div>
-      <section class="panel" style="margin-top:18px">
-        <div class="panel-header"><div><h3>Generated package register</h3><p>Private artifacts and authorized-download history</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th></th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td>${esc(item.filename)}<br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact"><button class="button secondary small" data-package-download="${attr(item.id)}" ${item.status!=="ready"?"disabled":""}>Download</button><button class="button danger small" data-package-revoke="${attr(item.id)}" ${item.status!=="ready"?"disabled":""}>Revoke</button></div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
+      <section class="panel platform-register-panel" style="margin-top:18px">
+        <div class="panel-header"><div><h3>Generated package register</h3><p>Private artifacts and authorized-download history</p></div><span class="status approved">${number(artifacts.length)} records</span></div>
+        <div class="table-wrap platform-register-scroll"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th>Actions</th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td><span class="package-filename">${esc(item.filename)}</span><br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact package-action-row">${item.status==="ready"?`<button class="button secondary small" data-package-download="${attr(item.id)}">Download</button><button class="button warning small" data-package-revoke="${attr(item.id)}">Revoke</button>`:`<button class="button success small" data-package-restore="${attr(item.id)}">Restore</button>`}<button class="button danger small" data-package-delete="${attr(item.id)}">Delete permanently</button></div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
       </section>
-      <section class="panel" style="margin-top:18px">
-        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 100 append-only package events</p></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Details</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(String(item.event_type||"").replaceAll("_"," "))}</strong></td><td>${esc(item.event_reason||"—")}</td><td><small>${esc(JSON.stringify(item.event_data||{}))}</small></td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No package events recorded</div></td></tr>`}</tbody></table></div>
+      <section class="panel platform-history-panel" style="margin-top:18px">
+        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 100 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${events.length?"":"disabled"}>Clear all history</button></div></div>
+        <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Details</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(String(item.event_type||"").replaceAll("_"," "))}</strong></td><td>${esc(item.event_reason||"—")}</td><td><code class="audit-json">${esc(JSON.stringify(item.event_data||{}))}</code></td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No package events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
     bindGithubNavigator();
   }
 
   function bindGithubNavigator() {
+    bindPlatformSectionTabs();
     byId("platformPackageRefresh").onclick=()=>{state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     byId("platformTemplateUpload").onclick=uploadPlatformPackageTemplate;
     const form=byId("schoolPackageForm"),nameInput=form.elements.school_name,shortInput=form.elements.short_name,prefixInput=form.elements.report_prefix,repoInput=form.elements.repository_name,tenantInput=form.elements.tenant_code,logoInput=byId("schoolPackageLogo");
@@ -5528,6 +5605,9 @@
     byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
     $$('[data-package-download]').forEach(button=>button.onclick=()=>downloadProtectedPackage(button.dataset.packageDownload,button));
     $$('[data-package-revoke]').forEach(button=>button.onclick=()=>revokeProtectedPackage(button.dataset.packageRevoke,button));
+    $$('[data-package-restore]').forEach(button=>button.onclick=()=>restoreProtectedPackage(button.dataset.packageRestore,button));
+    $$('[data-package-delete]').forEach(button=>button.onclick=()=>deleteProtectedPackage(button.dataset.packageDelete,button));
+    byId("packageAuditClear")?.addEventListener("click",clearPackageSecurityAudit);
   }
 
   function suggestedPrefix(name) {
@@ -5541,7 +5621,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.2 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.3 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
@@ -5574,6 +5654,35 @@
     button.disabled=true;
     try{await invokePlatformPackageManager("revoke",{artifact_id:artifactId,reason:reason.trim()});state.platformPackageConsole=null;toast("Package revoked");await renderGithubNavigator(state.viewToken,true)}
     catch(error){toast("Package not revoked",friendlyError(error),"error",8000)}finally{button.disabled=false}
+  }
+  async function restoreProtectedPackage(artifactId,button){
+    const reason=window.prompt("Enter the reason for restoring this revoked package:","Package restored for authorised deployment")||"";if(reason.trim().length<5)return;
+    if(!await confirmAction("Restore generated package","The package will return to Ready status and new authorized download links can be created.","Restore package"))return;
+    button.disabled=true;
+    try{await invokePlatformPackageManager("restore",{artifact_id:artifactId,reason:reason.trim()});state.platformPackageConsole=null;toast("Package restored");await renderGithubNavigator(state.viewToken,true)}
+    catch(error){toast("Package not restored",friendlyError(error),"error",8000)}finally{button.disabled=false}
+  }
+  function deleteProtectedPackage(artifactId,button){
+    modal("Delete Generated Package Permanently","This removes the private ZIP file and its generated-package register record. This action cannot be undone.",`<div class="destructive-confirmation"><label class="field"><span>Deletion reason</span><textarea id="packageDeleteReason" minlength="5" required></textarea></label><label class="field"><span>Type DELETE to confirm</span><input id="packageDeleteConfirmText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageDeleteCancel" type="button">Cancel</button><button class="button danger" id="packageDeleteConfirm" type="button">Delete permanently</button>`,"small");
+    byId("packageDeleteCancel").onclick=closeModal;
+    byId("packageDeleteConfirm").onclick=async()=>{
+      const reason=byId("packageDeleteReason").value.trim(),confirmation=byId("packageDeleteConfirmText").value.trim();
+      if(reason.length<5||confirmation!=="DELETE"){toast("Package not deleted","Enter a reason and type DELETE exactly.","error");return}
+      const action=byId("packageDeleteConfirm");action.disabled=true;action.textContent="Deleting";
+      try{const result=await invokePlatformPackageManager("delete",{artifact_id:artifactId,reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Generated package deleted permanently",result.storage_removed===false?"The register was removed, but private Storage cleanup needs platform-owner attention.":"The private package and register record were removed.",result.storage_removed===false?"warning":"success",9000);await renderGithubNavigator(state.viewToken,true)}
+      catch(error){toast("Package not deleted",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Delete permanently"}
+    };
+  }
+  function clearPackageSecurityAudit(){
+    modal("Clear Package Security Audit","This permanently removes every package-security event. Generated packages and the active protected template are not changed.",`<div class="destructive-confirmation"><label class="field"><span>Reason</span><textarea id="packageAuditClearReason" minlength="5" required></textarea></label><label class="field"><span>Type CLEAR to confirm</span><input id="packageAuditClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageAuditClearCancel" type="button">Cancel</button><button class="button danger" id="packageAuditClearConfirm" type="button">Clear permanently</button>`,"small");
+    byId("packageAuditClearCancel").onclick=closeModal;
+    byId("packageAuditClearConfirm").onclick=async()=>{
+      const reason=byId("packageAuditClearReason").value.trim(),confirmation=byId("packageAuditClearText").value.trim();
+      if(reason.length<5||confirmation!=="CLEAR"){toast("Audit not cleared","Enter a reason and type CLEAR exactly.","error");return}
+      const action=byId("packageAuditClearConfirm");action.disabled=true;action.textContent="Clearing";
+      try{await invokePlatformPackageManager("clear_events",{reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Package security history cleared");await renderGithubNavigator(state.viewToken,true)}
+      catch(error){toast("Audit not cleared",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Clear permanently"}
+    };
   }
 
   async function showVerification(token,verificationType="report") {
