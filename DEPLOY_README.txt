@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v7.2.0 REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v7.2.1 FINAL REUSABLE SCHOOLS EDITION
 
 1. Preserve the production config.js values.
 2. No SQL execution is required for this visual-alignment release.

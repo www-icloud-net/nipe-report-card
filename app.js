@@ -210,7 +210,8 @@
     return dialog;
   }
   function closeModal(force=false){
-    if(state.passwordChangeRequired&&!force)return;
+    const forced=force===true;
+    if(state.passwordChangeRequired&&!forced)return;
     const dialog=byId("modal");
     if(dialog.open) dialog.close();
     byId("modalBody").replaceChildren();
@@ -699,6 +700,7 @@
   if(window.__NIS_TEMPLATE_TEST_MODE__){
     window.NIS_TEMPLATE_TEST_HOOKS=Object.freeze({
       reportTemplateRangeForClass,validateReportTemplateFile,normaliseTemplateCanvas,drawAssignedTemplateOverlay,drawPreferredTerminalReport,builtInReportTemplateCanvas,
+      resolveReportTemplateMimeType,renderPdfTemplateBlob,subjectScoreBreakdown,closeModal,
       ordinalReportPosition,reportBodyFontName,reportBodyFontSize,reportBodyFontScale,reportSubjectPositionMap,
       setBoot:value=>{state.boot=value},getState:()=>state
     });
@@ -2988,8 +2990,12 @@
   async function renderPdfTemplateBlob(blob) {
     if(!window.pdfjsLib?.getDocument)throw new Error("PDF template rendering service is unavailable. Reload the system and try again.");
     window.pdfjsLib.GlobalWorkerOptions.workerSrc="assets/vendor/pdfjs-3.11.174.worker.min.js";
-    const documentTask=window.pdfjsLib.getDocument({data:new Uint8Array(await blob.arrayBuffer())});
-    const pdf=await documentTask.promise;
+    const bytes=new Uint8Array(await blob.arrayBuffer());let pdf;
+    try{pdf=await window.pdfjsLib.getDocument({data:bytes.slice()}).promise}
+    catch(workerError){
+      try{pdf=await window.pdfjsLib.getDocument({data:bytes.slice(),disableWorker:true}).promise}
+      catch(renderError){throw new Error("The report-card PDF template could not be rendered.",{cause:renderError||workerError})}
+    }
     if(pdf.numPages<1)throw new Error("The PDF template has no pages.");
     const page=await pdf.getPage(1),base=page.getViewport({scale:1});
     const scale=Math.min(1240/base.width,1754/base.height)*2;
@@ -3126,13 +3132,26 @@
     return canvas;
   }
 
+  function resolveReportTemplateMimeType(template,blob) {
+    const configured=String(template?.mime_type||"").toLowerCase();
+    if(configured==="application/pdf"||configured==="application/vnd.openxmlformats-officedocument.wordprocessingml.document")return configured;
+    const blobType=String(blob?.type||"").toLowerCase();
+    if(blobType==="application/pdf"||blobType==="application/vnd.openxmlformats-officedocument.wordprocessingml.document")return blobType;
+    const name=String(template?.original_name||template?.storage_path||"").toLowerCase().split("?")[0];
+    if(name.endsWith(".pdf"))return "application/pdf";
+    if(name.endsWith(".docx"))return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    throw new Error("The report-card template file format could not be identified.");
+  }
+
   async function storedReportTemplateCanvas(template) {
     if(!template?.storage_path)return null;
-    const cacheKey=`${template.storage_path}:${template.checksum||template.updated_at||""}`;
+    const cacheKey=`${template.storage_path}:${template.checksum||template.updated_at||template.version||""}`;
     if(state.templateCanvases.has(cacheKey))return state.templateCanvases.get(cacheKey);
     const {data,error}=await state.client.storage.from(CONFIG.templateBucket).download(template.storage_path);
-    if(error)throw error;
-    const canvas=await renderReportTemplateBlob(data,template.mime_type);
+    if(error)throw new Error("The uploaded report-card template could not be downloaded.",{cause:error});
+    if(!data||data.size<=0)throw new Error("The uploaded report-card template is empty.");
+    const mimeType=resolveReportTemplateMimeType(template,data);
+    const canvas=await renderReportTemplateBlob(data,mimeType);
     state.templateCanvases.clear();state.templateCanvases.set(cacheKey,canvas);
     return canvas;
   }
@@ -3143,6 +3162,13 @@
     if(!builtInReportTemplatePromise){
       builtInReportTemplatePromise=loadImage(CONFIG.defaultReportTemplatePath)
         .then(image=>normaliseTemplateCanvas(image))
+        .catch(async imageError=>{
+          const pdfPath=String(CONFIG.defaultReportTemplatePath||"").replace(/\.png(?:\?.*)?$/i,".pdf");
+          if(!pdfPath||pdfPath===CONFIG.defaultReportTemplatePath)throw imageError;
+          const response=await fetch(pdfPath,{cache:"no-store"});
+          if(!response.ok)throw imageError;
+          return renderPdfTemplateBlob(await response.blob());
+        })
         .catch(error=>{builtInReportTemplatePromise=null;throw error});
     }
     return builtInReportTemplatePromise;
@@ -3219,8 +3245,10 @@
   function subjectScoreBreakdown(subject) {
     const components=(subject.components||[]).filter(item=>item);
     const componentValue=item=>{
-      const weighted=Number(item.weighted_score);
-      if(Number.isFinite(weighted)&&weighted!==0)return weighted;
+      if(item.weighted_score!==null&&item.weighted_score!==undefined&&item.weighted_score!==""){
+        const weighted=Number(item.weighted_score);
+        if(Number.isFinite(weighted))return weighted;
+      }
       const raw=Number(item.raw_score);
       return Number.isFinite(raw)?raw:0;
     };
@@ -4709,7 +4737,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.0 Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.1 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted NISB2 payloads. Keep the NIS_BACKUP_ENCRYPTION_KEY secret separately. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -4973,7 +5001,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.0 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.1 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5004,7 +5032,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.0 final approved terminal-report template reliability
+  // Report Card Enterprise v7.2.1 final production-audit hardening
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5278,7 +5306,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_1_4.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_1_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5358,7 +5386,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.0 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.1 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
