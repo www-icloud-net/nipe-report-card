@@ -5,7 +5,7 @@ function stableScopeHash(value){
 }
 const CACHE_SCOPE_KEY=stableScopeHash(self.registration?.scope||self.location.href);
 const CACHE_FAMILY=`rce-report-card-${CACHE_SCOPE_KEY}-`;
-const CACHE_NAME=`${CACHE_FAMILY}v7-2-7-final-r1`;
+const CACHE_NAME=`${CACHE_FAMILY}v7-2-8-final-r1`;
 const matchCurrentCache=request=>caches.open(CACHE_NAME).then(cache=>cache.match(request));
 const STATIC_ASSETS = [
   "./","index.html","style.css","app.js","config.js","manifest.webmanifest",
