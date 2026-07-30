@@ -3096,6 +3096,8 @@
     "Tahoma":'Tahoma, Arial, sans-serif'
   });
   const REPORT_COMMENT_COLOUR="#0a2f73";
+  const REPORT_COMMENT_HEADING_COLOUR="#000000";
+  const REPORT_NEXT_TERM_REOPENING_COLOUR="#c00000";
   const REPORT_RESULT_COLOURS=Object.freeze({
     score:"#083b78",
     total:"#b00020",
@@ -3623,6 +3625,14 @@
     return `${schoolReportPrefix()}-${reportYearDigits(templateMeta.academicYearName)}-00000`;
   }
 
+  function drawReportNextTermReopening(ctx,value,x,y) {
+    const label="Next Term Reopens: ",resolved=String(value??"");
+    ctx.fillStyle=REPORT_COMMENT_HEADING_COLOUR;
+    ctx.fillText(label,x,y);
+    ctx.fillStyle=REPORT_NEXT_TERM_REOPENING_COLOUR;
+    ctx.fillText(resolved,x+ctx.measureText(label).width,y);
+  }
+
   function drawInlineReportField(ctx,{label,value,x,y,maxWidth=500,align="left",fontSize=20,minimumSize=13}) {
     const labelText=String(label||""),valueText=String(value??"");
     let size=fontSize,labelWidth=0,valueWidth=0;
@@ -3794,18 +3804,18 @@
     drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,842);
     drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,842);
 
-    ctx.fillStyle=REPORT_COMMENT_COLOUR;setReportFont(ctx,18,"bold");ctx.fillText("Class Teacher's Comment",38,908);
+    ctx.fillStyle=REPORT_COMMENT_HEADING_COLOUR;setReportFont(ctx,18,"bold");ctx.fillText("Class Teacher's Comment",38,908);
     [928,951].forEach(y=>drawReportDottedLine(ctx,38,710,y));
-    setReportFont(ctx,15,"normal");
+    setReportFont(ctx,15,"normal");ctx.fillStyle=REPORT_COMMENT_COLOUR;
     if(!manual){const lines=reportTextLines(ctx,report.teacher_comment||"",650,2);[925,948].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],43,y)})}
-    setReportFont(ctx,18,"bold");ctx.fillText("Principal's Comment",38,980);
+    setReportFont(ctx,18,"bold");ctx.fillStyle=REPORT_COMMENT_HEADING_COLOUR;ctx.fillText("Principal's Comment",38,980);
     [1000,1024].forEach(y=>drawReportDottedLine(ctx,38,710,y));
-    setReportFont(ctx,15,"normal");
+    setReportFont(ctx,15,"normal");ctx.fillStyle=REPORT_COMMENT_COLOUR;
     if(!manual){const lines=reportTextLines(ctx,report.head_comment||"",650,2);[997,1021].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],43,y)})}
 
     ctx.fillStyle=ink;const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
     setReportFont(ctx,18,"bold");ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,38,1056);
-    setReportFont(ctx,16,"bold");ctx.fillText(`Next Term Reopens: ${reportNextTermReopeningText(report,student,manual)}`,38,1125);
+    setReportFont(ctx,16,"bold");drawReportNextTermReopening(ctx,reportNextTermReopeningText(report,student,manual),38,1125);
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
@@ -3934,14 +3944,14 @@
     drawCenteredReportText(ctx,`Conduct: ${manual?"................................":report.conduct||""}`,350,860,shift(1175));
     drawRightReportText(ctx,`Interest: ${manual?".........................":report.interest||""}`,1194,shift(1175));
 
-    ctx.fillStyle=REPORT_COMMENT_COLOUR;setReportFont(ctx,20,"bold");ctx.fillText("Class Teacher's Comment",43,shift(1219));
+    ctx.fillStyle=REPORT_COMMENT_HEADING_COLOUR;setReportFont(ctx,20,"bold");ctx.fillText("Class Teacher's Comment",43,shift(1219));
     [1249,1278,1307].forEach(y=>drawReportDottedLine(ctx,43,850,shift(y)));
     setReportFont(ctx,17,"normal");ctx.fillStyle=REPORT_COMMENT_COLOUR;
     if(!manual){
       const lines=reportTextLines(ctx,report.teacher_comment||"",790,3);
       [1245,1274,1303].forEach((y,index)=>{if(lines[index])ctx.fillText(lines[index],47,shift(y))});
     }
-    setReportFont(ctx,20,"bold");ctx.fillStyle=REPORT_COMMENT_COLOUR;ctx.fillText("Principal's Comment",43,shift(1327));
+    setReportFont(ctx,20,"bold");ctx.fillStyle=REPORT_COMMENT_HEADING_COLOUR;ctx.fillText("Principal's Comment",43,shift(1327));
     [1357,1386].forEach(y=>drawReportDottedLine(ctx,43,650,shift(y)));
     setReportFont(ctx,17,"normal");ctx.fillStyle=REPORT_COMMENT_COLOUR;
     if(!manual){
@@ -3951,8 +3961,8 @@
     ctx.fillStyle=ink;
     const promotedName=(state.boot.classes||[]).find(item=>item.id===report.promoted_to_class_id)?.name||"";
     setReportFont(ctx,20,"bold");ctx.fillText(`Promoted To ${manual?"Basic.........":promotedName||"Basic........."}`,43,shift(1422));
-    setReportFont(ctx,17,"bold");ctx.fillStyle=ink;
-    ctx.fillText(`Next Term Reopens: ${reportNextTermReopeningText(report,student,manual)}`,43,shift(1460));
+    setReportFont(ctx,17,"bold");
+    drawReportNextTermReopening(ctx,reportNextTermReopeningText(report,student,manual),43,shift(1460));
 
     const base=school.verification_base_url||school.website||`${location.origin}${location.pathname}`;
     const qrText=manual?base:`${base}${base.includes("?")?"&":"?"}verify=${publication?.verification_token||""}`;
@@ -5096,7 +5106,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.8 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.9 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5375,7 +5385,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.8 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.9 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5416,7 +5426,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.8 Final transcript issuance deletion and production audit release
+  // Report Card Enterprise v7.2.9 Final report presentation and production audit release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5755,7 +5765,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_8_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_9_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
@@ -5839,7 +5849,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.8 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.9 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
