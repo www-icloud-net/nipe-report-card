@@ -1,7 +1,7 @@
 {
-  "name": "Nipe Report Card Enterprise v7.3.3 Final Reusable Schools Edition",
-  "short_name": "Report Card v7.3.3",
-  "description": "Academic reporting with production operations, report correction versioning, transcripts, privacy and security controls, disaster-recovery rehearsal, analytics, validated imports, mobile attendance, licensing, protected package generation, and verifiable certificates and awards",
+  "name": "Nipe Report Card Enterprise v7.3.4 Final Master Distribution Readiness",
+  "short_name": "Report Card v7.3.4",
+  "description": "Academic reporting with production operations, secure licensing and package distribution, complete encrypted backups, account-administration safeguards, notification idempotency, transcripts, privacy, analytics, attendance, certificates, and recovery rehearsal",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",

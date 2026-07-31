@@ -103,7 +103,7 @@
 
   const state = {
     client:null, session:null, boot:null, view:"dashboard", viewToken:0,
-    channels:[], photoUrls:new Map(), pdfUrls:new Map(), signatureUrls:new Map(), templateUrls:new Map(), templateCanvases:new Map(), online:navigator.onLine,
+    channels:[], photoUrls:new Map(), pdfUrls:new Map(), signatureUrls:new Map(), templateUrls:new Map(), storageUrlCaches:new Map(), templateCanvases:new Map(), online:navigator.onLine,
     studentPage:1, teacherPage:1, headteacherPage:1, reportPage:1, currentStudent:null, reportEditor:null,
     academicTab:"periods", notifications:[], mfaFactorId:null, mfaEnrollment:null,
     teacherAdmin:null, headteacherAdmin:null, userAdmin:null, userAccessRows:[], assignmentClassSelections:new Set(), assignmentSubjectSelections:new Set(),
@@ -156,7 +156,21 @@
     const readOnly=license.access_mode==="read_only";
     return `<section class="license-banner ${readOnly?"restricted":"warning"}"><div><strong>${readOnly?"Read-only licensing mode":licenseStatusLabel(license.computed_status)}</strong><span>${esc(warning||"The platform licence requires attention.")}</span></div>${license.expires_at?`<small>Expiry: ${esc(isoDateTime(license.expires_at))}</small>`:""}</section>`;
   }
-  const isConfigured = () => /^https:\/\/.+\.supabase\.co$/i.test(CONFIG.supabaseUrl) && !CONFIG.supabaseAnonKey.startsWith("YOUR_");
+  function decodePublicJwtPayload(token) {
+    try{
+      const encoded=String(token||"").split(".")[1]||"";
+      const normalised=encoded.replaceAll("-","+").replaceAll("_","/");
+      return JSON.parse(atob(normalised.padEnd(Math.ceil(normalised.length/4)*4,"=")));
+    }catch(_){return {}}
+  }
+  function isPublicSupabaseKey(value) {
+    const key=String(value||"").trim();
+    if(!key||key.startsWith("YOUR_")||key.startsWith("sb_secret_"))return false;
+    if(/^sb_publishable_[A-Za-z0-9_-]{20,}$/.test(key))return true;
+    if(key.split(".").length===3)return decodePublicJwtPayload(key).role==="anon";
+    return false;
+  }
+  const isConfigured = () => /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(CONFIG.supabaseUrl) && isPublicSupabaseKey(CONFIG.supabaseAnonKey);
   const legacyDefaultSchoolName = value => /^nipe international school$/i.test(String(value||"").trim());
   const legacyDefaultLogo = value => !value || /(?:^|\/)nipe-school-logo\.png(?:$|\?)/i.test(String(value));
   function schoolDisplayName(school=state.boot?.school||{}) {
@@ -298,6 +312,18 @@
         context_data:context,user_agent_text:navigator.userAgent
       });
     } catch (_) {}
+  }
+  async function removePrivateStorageObjects(bucket,paths,context={},warn=false) {
+    const list=[...new Set((Array.isArray(paths)?paths:[paths]).filter(Boolean).map(String))];
+    if(!list.length)return {removed:true,error:null};
+    const {error}=await state.client.storage.from(bucket).remove(list);
+    if(error){
+      await reportClientError(error,{source:"private_storage_cleanup",bucket,paths:list,...context});
+      if(warn)toast("Private Storage cleanup required","The record change succeeded, but one or more superseded private files could not be removed. Review the client-error log and the affected Storage bucket.","warning",9000);
+      return {removed:false,error};
+    }
+    const cache=storageUrlCache(bucket);list.forEach(path=>cache.delete(path));
+    return {removed:true,error:null};
   }
   function friendlyError(error) {
     const msg=error?.message||String(error||"Operation failed");
@@ -461,17 +487,30 @@
     });
   }
 
+  function storageUrlCache(bucket) {
+    if(bucket===CONFIG.photoBucket)return state.photoUrls;
+    if(bucket===CONFIG.signatureBucket)return state.signatureUrls;
+    if(bucket===CONFIG.templateBucket)return state.templateUrls;
+    if(bucket===CONFIG.pdfBucket)return state.pdfUrls;
+    if(!state.storageUrlCaches.has(bucket))state.storageUrlCaches.set(bucket,new Map());
+    return state.storageUrlCaches.get(bucket);
+  }
+  function clearPrivateStorageCaches() {
+    state.photoUrls.clear();state.pdfUrls.clear();state.signatureUrls.clear();state.templateUrls.clear();
+    for(const cache of state.storageUrlCaches.values())cache.clear();
+    state.storageUrlCaches.clear();
+    state.templateCanvases.clear();state.certificateTemplateCanvases.clear();
+  }
   async function signedUrl(bucket,path,seconds=900) {
     if(!path) return "";
     if(/^https?:\/\//i.test(path)||path.startsWith("data:")||path.startsWith("assets/")) return path;
-    const cache=bucket===CONFIG.photoBucket?state.photoUrls:
-      bucket===CONFIG.signatureBucket?state.signatureUrls:
-      bucket===CONFIG.templateBucket?state.templateUrls:state.pdfUrls;
-    const cached=cache.get(path);
+    const cache=storageUrlCache(bucket);
+    const cacheKey=String(path);
+    const cached=cache.get(cacheKey);
     if(cached&&cached.expires>Date.now()) return cached.url;
     const {data,error}=await state.client.storage.from(bucket).createSignedUrl(path,seconds);
     if(error) throw error;
-    cache.set(path,{url:data.signedUrl,expires:Date.now()+(seconds-30)*1000});
+    cache.set(cacheKey,{url:data.signedUrl,expires:Date.now()+Math.max(5,seconds-30)*1000});
     return data.signedUrl;
   }
 
@@ -554,7 +593,7 @@
     disconnectRealtime();
     await state.client?.auth.signOut();
     state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.platformPackageOffset=0;state.platformPackageSearch="";state.packageGenerationKey="";state.licenseRefreshBusy=false;state.lastLicenseVerifiedAt=0;state.delegationConsole=null;state.myEmergencyDelegations=[];state.operationsConsole=null;state.historyStudentId="";state.historyData=null;state.historyStudents=null;state.complianceConsole=null;state.analyticsData=null;state.certificateConsole=null;state.certificateBatch=null;state.certificateSettingsTemplates=[];state.certificateTemplateCanvases.clear();
-    state.templateUrls.clear();state.templateCanvases.clear();
+    clearPrivateStorageCaches();
     showOnly("authView");setLoading(false);
   }
 
@@ -888,19 +927,20 @@
       const file=byId("headteacherSignatureFile")?.files?.[0],button=byId("headteacherSignatureUpload");
       if(!file){toast("Signature not uploaded","Select a signature image first.","error");return}
       if(file.size>5*1024*1024){toast("Signature not uploaded","The image must be 5 MB or smaller.","error");return}
-      button.disabled=true;button.textContent="Uploading";let uploadedPath="";
+      button.disabled=true;button.textContent="Uploading";let uploadedPath="",registered=false;
       try{
         const blob=await prepareSignatureImage(file),path=`${state.boot.profile.id}/${Date.now()}.webp`;uploadedPath=path;
         const {error}=await state.client.storage.from(CONFIG.signatureBucket).upload(path,blob,{contentType:"image/webp",upsert:false});if(error)throw error;
-        await rpc("set_my_headteacher_signature",{target_signature_path:path,expected_updated_at:record.updated_at||null});
-        if(record.signature_path&&record.signature_path!==path)await state.client.storage.from(CONFIG.signatureBucket).remove([record.signature_path]).catch(()=>{});
-        state.signatureUrls.clear();toast("Digital signature uploaded","New and regenerated official report cards will use this signature.");await renderDashboard(state.viewToken);
-      }catch(error){if(uploadedPath)await state.client.storage.from(CONFIG.signatureBucket).remove([uploadedPath]).catch(()=>{});toast("Signature not uploaded",friendlyError(error),"error",6500)}
+        await rpc("set_my_headteacher_signature",{target_signature_path:path,expected_updated_at:record.updated_at||null});registered=true;
+        if(record.signature_path&&record.signature_path!==path)await removePrivateStorageObjects(CONFIG.signatureBucket,[record.signature_path],{source:"signature_replacement_cleanup",principal_id:record.id||null},true);
+        state.signatureUrls.clear();toast("Digital signature uploaded","New and regenerated official report cards will use this signature.");
+        try{await renderDashboard(state.viewToken)}catch(refreshError){await reportClientError(refreshError,{source:"signature_upload_refresh",principal_id:record.id||null});toast("Signature saved","Reload the page to refresh the signature preview.","warning",7000)}
+      }catch(error){if(uploadedPath&&!registered)await removePrivateStorageObjects(CONFIG.signatureBucket,[uploadedPath],{source:"signature_upload_rollback",principal_id:record.id||null},true);toast("Signature not uploaded",friendlyError(error),"error",6500)}
       finally{button.disabled=false;button.textContent="Upload signature"}
     });
     byId("headteacherSignatureRemove")?.addEventListener("click",async()=>{
       if(!await confirmAction("Remove Digital Signature","Published PDF files already generated remain unchanged. New and regenerated report cards will not show this signature.","Remove",true))return;
-      try{await rpc("set_my_headteacher_signature",{target_signature_path:"",expected_updated_at:record.updated_at||null});if(record.signature_path)await state.client.storage.from(CONFIG.signatureBucket).remove([record.signature_path]).catch(()=>{});state.signatureUrls.clear();toast("Digital signature removed");await renderDashboard(state.viewToken)}
+      try{await rpc("set_my_headteacher_signature",{target_signature_path:"",expected_updated_at:record.updated_at||null});if(record.signature_path)await removePrivateStorageObjects(CONFIG.signatureBucket,[record.signature_path],{source:"signature_remove_cleanup",principal_id:record.id||null},true);state.signatureUrls.clear();toast("Digital signature removed");try{await renderDashboard(state.viewToken)}catch(refreshError){await reportClientError(refreshError,{source:"signature_remove_refresh",principal_id:record.id||null});toast("Signature removed","Reload the page to refresh the signature panel.","warning",7000)}}
       catch(error){toast("Signature not removed",friendlyError(error),"error",6500)}
     });
   }
@@ -1330,10 +1370,12 @@
       let uploadedPhotoPath="",photoSaved=false;
       try {
         uploadedPhotoPath=await uploadStudentPhoto(saved.student.id,file);
+        const previousPhotoPath=record.student?.photo_url||"";
         saved=await rpc("set_student_photo",{target_student_id:saved.student.id,target_photo_url:uploadedPhotoPath,expected_updated_at:saved.student.updated_at||null});
-        uploadedPhotoPath="";photoSaved=true;
+        const committedPhotoPath=uploadedPhotoPath;uploadedPhotoPath="";photoSaved=true;
+        if(previousPhotoPath&&previousPhotoPath!==committedPhotoPath)await removePrivateStorageObjects(CONFIG.photoBucket,[previousPhotoPath],{source:"student_photo_replacement_cleanup",student_id:saved.student.id},true);
       } catch(error) {
-        if(uploadedPhotoPath)await state.client.storage.from(CONFIG.photoBucket).remove([uploadedPhotoPath]).catch(()=>{});
+        if(uploadedPhotoPath)await removePrivateStorageObjects(CONFIG.photoBucket,[uploadedPhotoPath],{source:"student_photo_upload_rollback",student_id:saved.student.id},true);
         await reportClientError(error,{source:"student_save",stage:"photo",student_id:saved.student.id});
         photoWarning="The student record was saved, but the photograph was not updated.";
       }
@@ -2901,12 +2943,12 @@
     try{
       await rpc("register_report_pdf",{target_report_id:editor.report.id,target_storage_path:path,target_checksum:checksum,target_page_count:1});
     }catch(error){
-      await state.client.storage.from(CONFIG.pdfBucket).remove([path]).catch(()=>{});throw error;
+      await removePrivateStorageObjects(CONFIG.pdfBucket,[path],{source:"report_pdf_registration_rollback",report_id:editor.report.id},true);throw error;
     }
     state.pdfUrls.delete(path);
     if(previousPath&&previousPath!==path){
       state.pdfUrls.delete(previousPath);
-      await state.client.storage.from(CONFIG.pdfBucket).remove([previousPath]).catch(()=>{});
+      await removePrivateStorageObjects(CONFIG.pdfBucket,[previousPath],{source:"report_pdf_replacement_cleanup",report_id:editor.report.id},true);
     }
     return {pdf,safeName,path};
   }
@@ -3053,8 +3095,7 @@
           return privateBlobWithDetectedType(data,candidate);
         }catch(error){lastError=error}
         try{
-          const cache=bucket===CONFIG.signatureBucket?state.signatureUrls:bucket===CONFIG.photoBucket?state.photoUrls:state.pdfUrls;
-          cache?.delete?.(candidate);
+          storageUrlCache(bucket).delete(candidate);
           const url=await signedUrl(bucket,candidate,900),response=await fetch(url,{cache:"no-store"});
           if(!response.ok)throw new Error(`${label} signed request failed with status ${response.status}`);
           const blob=await response.blob();if(!blob.size)throw new Error(`${label} is empty`);return privateBlobWithDetectedType(blob,candidate);
@@ -4393,7 +4434,7 @@
         <label class="field"><span>Role</span><select id="userRoleSelect" name="role">
           ${["system_admin","principal","class_teacher","subject_teacher","parent_guardian"].map(r=>`<option value="${r}" ${r===user.role?"selected":""}>${esc(ROLE_LABELS[r])}</option>`).join("")}
         </select></label>
-        <label class="field full"><span>${id?"New password":"Password"}</span><div class="password-wrap"><input id="adminUserPassword" name="password" type="password" autocomplete="new-password" ${id?"":"required"}><button id="generateUserPassword" class="button ghost small" type="button">Generate</button></div></label>
+        ${id?`<div class="help-text full">Use the separate <strong>Reset password</strong> action after saving account details.</div>`:`<label class="field full"><span>Password</span><div class="password-wrap"><input id="adminUserPassword" name="password" type="password" autocomplete="new-password" required><button id="generateUserPassword" class="button ghost small" type="button">Generate</button></div></label>`}
         <label class="check-field"><input name="active" type="checkbox" ${user.active!==false?"checked":""}><span>Active account</span></label>
         <label class="check-field"><input name="mfa_required" type="checkbox" ${user.mfa_required?"checked":""}><span>Require multi-factor authentication</span></label>
         <label class="check-field full"><input name="must_change_password" type="checkbox" ${user.must_change_password?"checked":""}><span>Force password change on next login</span></label>
@@ -4405,7 +4446,8 @@
     const userForm=byId("userForm");
     userForm.elements.full_name.addEventListener("input",()=>scheduleGeneratedUserEmail(id));
     if(!id)scheduleGeneratedUserEmail(null);
-    byId("generateUserPassword").onclick=()=>{const password=generateSecurePassword();byId("adminUserPassword").value=password;byId("adminUserPassword").type="text"};
+    const generatePasswordButton=byId("generateUserPassword");
+    if(generatePasswordButton)generatePasswordButton.onclick=()=>{const password=generateSecurePassword();byId("adminUserPassword").value=password;byId("adminUserPassword").type="text"};
     byId("userRoleSelect").onchange=()=>{
       syncUserAccessRowsFromSelections();
       renderUserAccessRows();
@@ -4548,11 +4590,11 @@
     const v=formObject(form);button.disabled=true;button.textContent=userId?"Saving":"Creating";let saved=false;
     try{
       if(!userId&&String(v.password||"").length<8)throw new Error("Password must contain at least 8 characters");
-      if(userId&&v.password&&String(v.password).length<8)throw new Error("Password must contain at least 8 characters");
+      if(userId&&v.password)throw new Error("Use Reset password for password changes");
       if(["principal","class_teacher","subject_teacher"].includes(v.role)&&!v.staff_record_id)throw new Error("Select the corresponding staff record");
       syncUserAccessRowsFromSelections();
       const payload={user_id:userId||undefined,full_name:v.full_name.trim(),email:v.email.trim(),phone:v.phone.trim(),role:v.role,staff_record_id:v.staff_record_id||"",
-        password:v.password||"",active:form.elements.active.checked,mfa_required:form.elements.mfa_required.checked,
+        password:userId?"":(v.password||""),active:form.elements.active.checked,mfa_required:form.elements.mfa_required.checked,
         must_change_password:form.elements.must_change_password.checked,
         access:state.userAccessRows.filter(x=>x.class_id),reason:userId?"User account updated":"User account created"};
       await invokeAdminUserManagement(userId?"update":"create",payload);saved=true;state.workspace=null;closeModal();toast(userId?"User account saved":"User account created");
@@ -4637,7 +4679,7 @@
   function auditRows(rows) {
     return rows.length?`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Record</th><th>Action</th><th>Reason</th><th></th></tr></thead><tbody>
       ${rows.map((row,index)=>`<tr><td>${isoDateTime(row.created_at)}</td><td>${esc(row.actor_name||"System")}</td><td>${esc(row.table_name)}<br><small>${esc(row.record_id||"")}</small></td>
-      <td><span class="chip">${esc(row.action)}</span></td><td>${esc(row.reason||"")}</td><td><div class="table-actions"><button class="button ghost small" data-audit-index="${index}">Details</button><button class="button danger small" data-audit-delete="${attr(row.id)}">Delete</button></div></td></tr>`).join("")}
+      <td><span class="chip">${esc(row.action)}</span></td><td>${esc(row.reason||"")}</td><td><div class="table-actions"><button class="button ghost small" data-audit-index="${index}">Details</button><button class="button danger small" data-audit-delete="${attr(row.id)}">Archive</button></div></td></tr>`).join("")}
     </tbody></table></div>`:`<div class="empty"><strong>No audit events</strong></div>`;
   }
   function bindAuditRows() {
@@ -4646,12 +4688,12 @@
       modal("Audit Event",`${row.table_name} • ${row.action}`,`<div class="revision-compare"><div class="diff-card"><h4>Before</h4><pre>${esc(JSON.stringify(row.old_data,null,2))}</pre></div><div class="diff-card"><h4>After</h4><pre>${esc(JSON.stringify(row.new_data,null,2))}</pre></div></div>`,`<button class="button ghost" id="auditClose" type="button">Close</button>`,"wide");
       byId("auditClose").onclick=closeModal;
     });
-    $$('[data-audit-delete]').forEach(button=>button.onclick=async()=>{if(!await confirmAction("Delete Audit Event","Remove this audit event permanently?","Delete",true))return;await rpc("delete_audit_events",{event_ids:[Number(button.dataset.auditDelete)]});toast("Audit event deleted");await renderAudit(state.viewToken,true)});
+    $$('[data-audit-delete]').forEach(button=>button.onclick=async()=>{if(!await confirmAction("Archive Audit Event","Move this event from the active console into the retained audit archive?","Archive",true))return;await rpc("delete_audit_events",{event_ids:[Number(button.dataset.auditDelete)]});toast("Audit event archived");await renderAudit(state.viewToken,true)});
   }
   async function resetAuditLog() {
-    modal("Reset Audit Log","This permanently deletes the current audit trail.",`<div class="form-stack"><p class="help-text">Type <strong>RESET AUDIT LOG</strong> to confirm.</p><label class="field"><span>Confirmation</span><input id="auditResetConfirm" autocomplete="off"></label></div>`,`<button class="button ghost" id="auditResetCancel" type="button">Cancel</button><button class="button danger" id="auditResetRun" type="button">Reset audit log</button>`,"small");
+    modal("Archive Audit Log","This moves the current audit trail into the retained audit archive and clears only the active console.",`<div class="form-stack"><p class="help-text">Type <strong>ARCHIVE AUDIT LOG</strong> to confirm.</p><label class="field"><span>Confirmation</span><input id="auditResetConfirm" autocomplete="off"></label></div>`,`<button class="button ghost" id="auditResetCancel" type="button">Cancel</button><button class="button danger" id="auditResetRun" type="button">Archive audit log</button>`,"small");
     byId("auditResetCancel").onclick=closeModal;
-    byId("auditResetRun").onclick=async()=>{const value=byId("auditResetConfirm").value;try{const result=await rpc("reset_audit_log",{confirmation_text:value});closeModal();toast("Audit log reset",`${number(result.deleted)} events deleted`);await renderAudit(state.viewToken,true)}catch(error){toast("Audit log not reset",friendlyError(error),"error")}};
+    byId("auditResetRun").onclick=async()=>{const value=byId("auditResetConfirm").value;try{const result=await rpc("reset_audit_log",{confirmation_text:value});closeModal();toast("Audit log archived",`${number(result.archived??result.deleted)} events retained in the archive`);await renderAudit(state.viewToken,true)}catch(error){toast("Audit log not archived",friendlyError(error),"error")}};
   }
 
 
@@ -4688,11 +4730,11 @@
       const {error}=await state.client.storage.from(CONFIG.templateBucket).upload(path,file,{contentType:info.mimeType,upsert:false,cacheControl:"3600"});if(error)throw error;
       try{
         await rpc("save_report_card_template",{target_range_key:rangeKey,target_storage_path:path,target_original_name:file.name,target_mime_type:info.mimeType,target_file_size:file.size,target_checksum:checksum});
-      }catch(error){await state.client.storage.from(CONFIG.templateBucket).remove([path]).catch(()=>{});throw error}
-      if(previous?.storage_path&&previous.storage_path!==path)await state.client.storage.from(CONFIG.templateBucket).remove([previous.storage_path]).catch(()=>{});
+      }catch(error){await removePrivateStorageObjects(CONFIG.templateBucket,[path],{source:"report_template_upload_rollback",range_key:rangeKey},true);throw error}
+      if(previous?.storage_path&&previous.storage_path!==path)await removePrivateStorageObjects(CONFIG.templateBucket,[previous.storage_path],{source:"report_template_replacement_cleanup",range_key:rangeKey},true);
       state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear();
       toast("Report-card template assigned",`${reportTemplateGroup(rangeKey)?.shortLabel||rangeKey} now uses ${file.name}.`);
-      await renderSettings(state.viewToken,true);
+      try{await renderSettings(state.viewToken,true)}catch(refreshError){await reportClientError(refreshError,{source:"report_template_upload_refresh",range_key:rangeKey});toast("Template saved","Reload the page to refresh the template settings.","warning",7000)}
     }catch(error){toast("Template not uploaded",friendlyError(error),"error",7000);await reportClientError(error,{source:"report_template_upload",range_key:rangeKey})}
     finally{setLoading(false);if(button){button.disabled=false;button.textContent=findReportTemplate(rangeKey)?"Replace":"Upload"}}
   }
@@ -4734,9 +4776,9 @@
     if(!await confirmAction("Remove Report-card Template",`${group?.label||rangeKey} will return to the approved built-in report-card design. Existing published PDF files remain unchanged until regenerated.`,"Remove",true))return;
     try{
       const removed=await rpc("remove_report_card_template",{target_range_key:rangeKey});
-      if(removed?.storage_path)await state.client.storage.from(CONFIG.templateBucket).remove([removed.storage_path]).catch(()=>{});
+      if(removed?.storage_path)await removePrivateStorageObjects(CONFIG.templateBucket,[removed.storage_path],{source:"report_template_remove_cleanup",range_key:rangeKey},true);
       state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.templateUrls.clear();state.templateCanvases.clear();
-      toast("Report-card template removed",`${group?.shortLabel||rangeKey} now uses the built-in design.`);await renderSettings(state.viewToken,true);
+      toast("Report-card template removed",`${group?.shortLabel||rangeKey} now uses the built-in design.`);try{await renderSettings(state.viewToken,true)}catch(refreshError){await reportClientError(refreshError,{source:"report_template_remove_refresh",range_key:rangeKey});toast("Template removed","Reload the page to refresh the template settings.","warning",7000)}
     }catch(error){toast("Template not removed",friendlyError(error),"error",6500)}
   }
 
@@ -5202,7 +5244,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.3 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.4 Final Master Distribution Readiness Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5481,7 +5523,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.3 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.4 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5522,7 +5564,7 @@
   }
 
 
-  // Report Card Enterprise v7.3.3 Final login bootstrap and trigger safety fix release
+  // Report Card Enterprise v7.3.4 Final master distribution readiness release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5620,7 +5662,7 @@
       try{
         await rpc("save_certificate_template",{payload:{...formObject(form),storage_path:path,original_name:file.name,mime_type:info.mimeType,file_size:file.size,checksum}});
       }catch(error){
-        await state.client.storage.from(CONFIG.certificateTemplateBucket).remove([path]).catch(()=>{});
+        await removePrivateStorageObjects(CONFIG.certificateTemplateBucket,[path],{source:"certificate_template_upload_rollback",certificate_type:certificateType},true);
         throw error;
       }
       state.certificateConsole=null;state.certificateSettingsTemplates=[];state.certificateTemplateCanvases.clear();
@@ -5793,7 +5835,7 @@
     return imagePdf(jpeg,841.89,595.28,1754,1240);
   }
   function wrappedTextLines(ctx,text,maxWidth){const words=String(text||"").split(/\s+/).filter(Boolean),lines=[];let line="";for(const word of words){const next=line?`${line} ${word}`:word;if(ctx.measureText(next).width>maxWidth&&line){lines.push(line);line=word}else line=next}if(line)lines.push(line);return lines}
-  async function createAndStoreCertificatePdf(data,certificate){if(role()!=="system_admin")throw new Error("Only the System Administrator can create official certificate PDFs");if(!certificate||certificate.status!=="issued")throw new Error("Only an issued certificate can have an official PDF");const pdf=await createCertificatePdf(data,certificate),checksum=await sha256(pdf),year=safeArchiveSegment(certificate.academic_year_name,"year"),safeNumber=safeArchiveSegment(certificate.certificate_number,"certificate"),path=`${data.batch.certificate_type}/${year}/${safeNumber}-r${certificate.revision_no}-${Date.now()}.pdf`,previous=certificate.pdf_storage_path||"";const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).upload(path,pdf,{contentType:"application/pdf",upsert:false,cacheControl:"31536000"});if(error)throw error;try{await rpc("register_certificate_pdf",{target_certificate_id:certificate.id,target_storage_path:path,target_checksum:checksum})}catch(error){await state.client.storage.from(CONFIG.certificatePdfBucket).remove([path]).catch(()=>{});throw error}if(previous&&previous!==path)await state.client.storage.from(CONFIG.certificatePdfBucket).remove([previous]).catch(()=>{});certificate.pdf_storage_path=path;certificate.pdf_sha256=checksum;return {pdf,path,checksum,fallbackUsed:Boolean(certificate.__usedBuiltInTemplateFallback),liveTemplateRecovered:Boolean(certificate.__usedLiveTemplateRecovery)}}
+  async function createAndStoreCertificatePdf(data,certificate){if(role()!=="system_admin")throw new Error("Only the System Administrator can create official certificate PDFs");if(!certificate||certificate.status!=="issued")throw new Error("Only an issued certificate can have an official PDF");const pdf=await createCertificatePdf(data,certificate),checksum=await sha256(pdf),year=safeArchiveSegment(certificate.academic_year_name,"year"),safeNumber=safeArchiveSegment(certificate.certificate_number,"certificate"),path=`${data.batch.certificate_type}/${year}/${safeNumber}-r${certificate.revision_no}-${Date.now()}.pdf`,previous=certificate.pdf_storage_path||"";const {error}=await state.client.storage.from(CONFIG.certificatePdfBucket).upload(path,pdf,{contentType:"application/pdf",upsert:false,cacheControl:"31536000"});if(error)throw error;try{await rpc("register_certificate_pdf",{target_certificate_id:certificate.id,target_storage_path:path,target_checksum:checksum})}catch(error){await removePrivateStorageObjects(CONFIG.certificatePdfBucket,[path],{source:"certificate_pdf_registration_rollback",certificate_id:certificate.id},true);throw error}if(previous&&previous!==path)await removePrivateStorageObjects(CONFIG.certificatePdfBucket,[previous],{source:"certificate_pdf_replacement_cleanup",certificate_id:certificate.id},true);certificate.pdf_storage_path=path;certificate.pdf_sha256=checksum;return {pdf,path,checksum,fallbackUsed:Boolean(certificate.__usedBuiltInTemplateFallback),liveTemplateRecovered:Boolean(certificate.__usedLiveTemplateRecovery)}}
   async function downloadStoredCertificatePdf(data,certificate){
     setLoading(true);
     try{
@@ -5861,7 +5903,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_3_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_4_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
@@ -5956,7 +5998,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.3 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.4 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
