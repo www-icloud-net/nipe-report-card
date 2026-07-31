@@ -88,13 +88,14 @@
     {id:"notifications",label:"Notifications",icon:"◆",subtitle:"School and workflow alerts",feature:"notifications"},
     {id:"compliance",label:"Privacy and Security",icon:"◈",subtitle:"Retention, privacy requests, security events, and verification",roles:["system_admin","principal"],feature:"governance"},
     {id:"audit",label:"Audit Trail",icon:"◎",subtitle:"Record changes and accountability",permission:"view_audit",feature:"governance"},
+    {id:"backup_restore",label:"Backup & Restore",icon:"↻",subtitle:"Downloadable full-school continuity and disaster recovery",roles:["system_admin"]},
     {id:"settings",label:"Settings",icon:"⚙",subtitle:"School identity, security, and resilience",roles:["system_admin"]},
     {id:"github",label:"GitHub Navigator",icon:"⌁",subtitle:"Protected package generation and deployment controls",roles:["platform_super_admin"]}
   ];
 
   const ROLE_NAV_IDS = Object.freeze({
     platform_super_admin:["licensing","github"],
-    system_admin:["dashboard","operations","students","history","teachers","headteachers","academics","delegations","reports","certificates","insights","users","notifications","compliance","audit","settings"],
+    system_admin:["dashboard","operations","students","history","teachers","headteachers","academics","delegations","reports","certificates","insights","users","notifications","compliance","audit","backup_restore","settings"],
     principal:["dashboard","operations","history","delegations","reports","certificates","insights","notifications","compliance"],
     class_teacher:["dashboard","my_class","attendance","my_subjects","students","history","reports","insights","notifications"],
     subject_teacher:["dashboard","my_subjects","students","history","reports","insights","notifications"],
@@ -783,7 +784,7 @@
     try {
       const renderer={
         dashboard:renderDashboard,operations:renderOperations,licensing:renderLicensing,my_class:renderMyClass,attendance:renderAttendance,my_subjects:renderMySubjects,students:renderStudents,history:renderAcademicHistory,teachers:renderTeachers,headteachers:renderPrincipals,academics:renderAcademics,delegations:renderEmergencyDelegations,reports:renderReports,certificates:renderCertificates,insights:renderInsights,
-        children:renderChildren,users:renderUsers,notifications:renderNotifications,compliance:renderCompliance,audit:renderAudit,settings:renderSettings,github:renderGithubNavigator
+        children:renderChildren,users:renderUsers,notifications:renderNotifications,compliance:renderCompliance,audit:renderAudit,backup_restore:renderBackupRestore,settings:renderSettings,github:renderGithubNavigator
       }[view];
       await renderer?.(token,force);
       if(token===state.viewToken&&role()!=="platform_super_admin") {const banner=licenseBannerHtml();if(banner)byId("content")?.insertAdjacentHTML("afterbegin",banner);}
@@ -5033,6 +5034,29 @@
     };
   }
 
+
+  async function renderBackupRestore(token) {
+    let backupData=null,restoreData=null;
+    try{backupData=await rpc("backup_dashboard")}catch(_){}
+    try{restoreData=await rpc("school_restore_dashboard")}catch(_){}
+    if(token!==state.viewToken)return;
+    byId("pageContent").innerHTML=`<div class="page-head"><div><h3>Full School Backup and Restore</h3><p>Encrypted continuity packages for disaster recovery and migration to a compatible fresh installation.</p></div></div>
+      <section class="license-banner warning"><div><strong>High-impact administration area</strong><span>A restore replaces operational school records and protected files. Use MFA, make a current recovery backup first, and keep all users out of the system until verification completes.</span></div></section>
+      <section class="panel pad backup-recovery-panel"><div class="section-title"><div><h4>Create and Download Full School Backup</h4><p>Includes academic records, users, reports, attendance, transcripts, certificates, templates, photographs and signatures. Password hashes and platform signing secrets are never exported.</p></div></div>
+      <div class="button-row"><button class="button primary" id="fullSchoolBackupCreate" type="button">Create full encrypted backup</button></div>${backupHistoryHtml(backupData?.backups||[])}</section>
+      <section class="panel pad"><div class="section-title"><div><h4>Restore a Downloaded School Backup</h4><p>Upload a ZIP package previously downloaded from this school. The server verifies encryption, checksums, school identity and schema compatibility before changing data.</p></div></div>
+      <div class="template-information"><strong>Required sequence</strong><span>Install and license the compatible fresh system, sign in as System Administrator with MFA, create a recovery point, upload the backup, type RESTORE SCHOOL, then keep the browser open until final verification succeeds.</span></div>
+      <form id="schoolRestoreForm" class="form-grid compact"><label class="field full"><span>Encrypted school backup ZIP</span><input type="file" name="backup_file" accept=".zip,application/zip" required></label><label class="field full"><span>Typed confirmation</span><input name="confirmation" autocomplete="off" placeholder="RESTORE SCHOOL" required></label><label class="field full"><span>Reason</span><textarea name="reason" minlength="10" placeholder="State why this full restoration is required" required></textarea></label><div class="full button-row"><button class="button danger" id="schoolRestoreStart" type="button">Validate and restore school data</button></div></form>
+      ${restoreHistoryHtml(restoreData?.jobs||[])}</section>`;
+    byId("fullSchoolBackupCreate").onclick=createManualBackup;
+    byId("schoolRestoreStart").onclick=startSchoolRestoreImport;
+    bindBackupHistoryControls();
+  }
+  function restoreHistoryHtml(jobs=[]){if(!jobs.length)return `<div class="empty"><strong>No restoration has been attempted</strong><span>Verified restore events will appear here.</span></div>`;return `<div class="table-wrap"><table><thead><tr><th>Created</th><th>Package</th><th>Status</th><th>Source</th><th>Result</th></tr></thead><tbody>${jobs.map(j=>`<tr><td>${isoDateTime(j.created_at)}</td><td><strong>${esc(j.source_filename||"-")}</strong><br><small>${readableBytes(j.package_size||0)}</small></td><td><span class="chip ${j.status==="completed"?"success":j.status==="failed"?"danger":"warning"}">${esc(statusText(j.status))}</span></td><td>${esc(j.source_school_name||"Pending validation")}<br><small>${esc(j.source_schema_version||"")}</small></td><td>${j.error_message?`<small>${esc(j.error_message)}</small>`:esc(j.verification_notes||"")}</td></tr>`).join("")}</tbody></table></div>`}
+  async function sha256File(file){const hash=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());return [...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,"0")).join("")}
+  async function waitForRestore(jobId,timeoutMs=900000){const start=Date.now();while(Date.now()-start<timeoutMs){const {data,error}=await state.client.from("school_restore_jobs").select("*").eq("id",jobId).single();if(error)throw error;if(data.status==="completed")return data;if(data.status==="failed")throw new Error(data.error_message||"School restoration failed.");await new Promise(r=>setTimeout(r,4000))}throw new Error("The restore is still running. Keep the system in maintenance mode and refresh Backup & Restore shortly.")}
+  async function startSchoolRestoreImport(){const form=byId("schoolRestoreForm"),file=form?.elements?.backup_file?.files?.[0],confirmation=String(form?.elements?.confirmation?.value||"").trim(),reason=String(form?.elements?.reason?.value||"").trim(),button=byId("schoolRestoreStart");if(!file){toast("Backup required","Choose the downloaded encrypted backup ZIP.","error");return}if(confirmation!=="RESTORE SCHOOL"){toast("Confirmation does not match","Type RESTORE SCHOOL exactly.","error");return}if(reason.length<10){toast("Reason required","Enter at least 10 characters.","error");return}if(!await confirmAction("Restore all school data",`This will replace operational school records and protected files using ${file.name}. A pre-restore recovery backup will be created first. Do not continue while other users are active.`,"Begin restoration"))return;button.disabled=true;setSync("pending","Preparing restore");try{const checksum=await sha256File(file);const {data:prep,error:prepError}=await state.client.functions.invoke("scheduled-backup",{body:{action:"prepare_restore_import",file_name:file.name,file_size:file.size,checksum,reason}});if(prepError)throw prepError;if(!prep?.path||!prep?.token||!prep?.job_id)throw new Error("Restore upload authorization was not returned.");const {error:uploadError}=await state.client.storage.from(CONFIG.backupBucket).uploadToSignedUrl(prep.path,prep.token,file,{contentType:"application/zip"});if(uploadError)throw uploadError;setSync("pending","Restoring school data");const {data:start,error:startError}=await state.client.functions.invoke("scheduled-backup",{body:{action:"execute_restore_import",job_id:prep.job_id,confirmation,reason}});if(startError)throw startError;const completed=await waitForRestore(prep.job_id);toast("School restoration completed",completed.verification_notes||"Data and protected files were restored and verified.","success",10000);setSync("online","Synced");await renderBackupRestore(state.viewToken,true)}catch(error){toast("School restoration unsuccessful",friendlyError(error),"error",12000);setSync("pending","Attention required")}finally{button.disabled=false}}
+
   async function renderSettings(token) {
     const school=state.boot.school||{};
     const brandingEnabled=licenseFeatureEnabled("custom_branding");
@@ -5244,7 +5268,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.4 Final Master Distribution Readiness Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.5 Final School Backup and Disaster Recovery Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5903,7 +5927,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_4_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_5_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>

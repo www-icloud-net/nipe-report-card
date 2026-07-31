@@ -12,4 +12,4 @@ GENERATED SCHOOL
 - Deploy only admin-user-management, notification-dispatcher, scheduled-backup, and license-verifier.
 - Do not deploy platform-package-manager or license-authority.
 
-After deployment, hard-refresh browsers and confirm service-worker cache `v7-3-4-final-r1`. Complete live licence, role, login, offline, Storage, and report acceptance tests before production use.
+After deployment, hard-refresh browsers and confirm service-worker cache `v7-3-5-final-r1`. Complete live licence, role, login, offline, Storage, and report acceptance tests before production use.
