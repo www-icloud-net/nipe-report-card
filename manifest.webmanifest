@@ -1,7 +1,7 @@
 {
-  "name": "Nipe Report Card Enterprise v7.3.7 Final School Backup Migration Compatibility Fix",
-  "short_name": "Report Card v7.3.7",
-  "description": "Academic reporting with production operations, secure licensing and package distribution, complete encrypted backups, account-administration safeguards, notification idempotency, transcripts, privacy, analytics, attendance, certificates, and recovery rehearsal",
+  "name": "Nipe Report Card Enterprise v7.3.8 Final Backup Runtime Reliability and Product Stabilization",
+  "short_name": "Report Card v7.3.8",
+  "description": "Academic reporting with secure licensing, reliable encrypted school backups, full restoration, package distribution, recovery rehearsal, transcripts, privacy, analytics, attendance, and certificates",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f4f7fb",

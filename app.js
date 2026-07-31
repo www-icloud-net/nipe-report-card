@@ -293,6 +293,41 @@
     state.lastSync=new Date();
     return data;
   }
+  async function edgeFunctionErrorMessage(error,data=null) {
+    const direct=data&&typeof data==="object"?(data.error||data.message||data.msg):"";
+    if(direct)return String(direct);
+    const context=error?.context;
+    if(context){
+      try{
+        const response=typeof context.clone==="function"?context.clone():context;
+        const payload=await response.json();
+        const message=payload?.error||payload?.message||payload?.msg;
+        if(message)return String(message);
+      }catch(_){
+        try{
+          const response=typeof context.clone==="function"?context.clone():context;
+          const body=await response.text();
+          if(body){
+            try{const payload=JSON.parse(body);if(payload?.error||payload?.message)return String(payload.error||payload.message)}catch(__){}
+            return body.slice(0,1000);
+          }
+        }catch(__){}
+      }
+    }
+    return String(error?.message||"Edge Function request failed");
+  }
+  async function invokeEdgeFunction(name,body={}) {
+    const {data,error}=await state.client.functions.invoke(name,{body});
+    if(error){
+      const wrapped=new Error(await edgeFunctionErrorMessage(error,data));
+      wrapped.name=String(error.name||"EdgeFunctionError");
+      wrapped.code=error.code||"";
+      wrapped.cause=error;
+      throw wrapped;
+    }
+    state.lastSync=new Date();
+    return data;
+  }
   async function rpcAllRows(name,args={},maxPages=500) {
     const rows=[];let page=1,last={};
     while(page<=maxPages){
@@ -342,6 +377,10 @@
     if(msg.includes("student_reports_enrollment_id_key")||msg.includes("student_reports_enrollment_id_term_id_key")) return "The database still has a legacy report uniqueness rule. Apply the v6.6.1 database hotfix, then save the report again.";
     if(msg.includes("list_report_card_templates")||msg.includes("report_card_templates")||msg.includes("report-card-templates")) return "Apply the v6.6.3 database hotfix, then reload the system.";
     if(error?.code==="23505"&&msg.toLowerCase().includes("student_reports")) return "A current report already exists for this student and term.";
+    if(msg.toLowerCase().includes("multi-factor authentication required")) return "Multi-factor authentication is required for this protected operation. Sign out, sign in again, and complete the authenticator-code step, or enable an authenticator in Settings.";
+    if(msg.includes("RCE_BACKUP_ENCRYPTION_KEY is required")||msg.includes("NIS_BACKUP_ENCRYPTION_KEY")) return "The backup encryption secret is missing from the scheduled-backup Edge Function. Configure RCE_BACKUP_ENCRYPTION_KEY and redeploy the function.";
+    if(msg.toLowerCase().includes("service configuration unavailable")) return "The scheduled-backup Edge Function is missing its Supabase service configuration. Redeploy it and confirm SUPABASE_URL and the service-role secret are available.";
+    if(msg.toLowerCase().includes("bucket not found")) return "A required private Storage bucket is unavailable. Apply the current setup, confirm the system-backups bucket exists, and redeploy scheduled-backup.";
     if(msg.toLowerCase().includes("failed to fetch")||msg.toLowerCase().includes("network")) return "The server could not be reached.";
     return msg;
   }
@@ -5036,11 +5075,15 @@
 
 
   async function renderBackupRestore(token) {
-    let backupData=null,restoreData=null;
-    try{backupData=await rpc("backup_dashboard")}catch(_){}
-    try{restoreData=await rpc("school_restore_dashboard")}catch(_){}
+    let backupData=null,restoreData=null,backupLoadError="",restoreLoadError="";
+    try{backupData=await rpc("backup_dashboard")}catch(error){backupLoadError=friendlyError(error)}
+    try{restoreData=await rpc("school_restore_dashboard")}catch(error){restoreLoadError=friendlyError(error)}
     if(token!==state.viewToken)return;
-    byId("pageContent").innerHTML=`<div class="page-head"><div><h3>Full School Backup and Restore</h3><p>Encrypted continuity packages for disaster recovery and migration to a compatible fresh installation.</p></div></div>
+    const host=byId("content");
+    if(!host)throw new Error("The Backup & Restore content host is unavailable. Reload the application.");
+    const loadWarnings=[backupLoadError?`<section class="license-banner warning"><div><strong>Backup history unavailable</strong><span>${esc(backupLoadError)}</span></div></section>`:"",restoreLoadError?`<section class="license-banner warning"><div><strong>Restore history unavailable</strong><span>${esc(restoreLoadError)}</span></div></section>`:""].join("");
+    host.innerHTML=`<div class="page-head"><div><h3>Full School Backup and Restore</h3><p>Encrypted continuity packages for disaster recovery and migration to a compatible fresh installation.</p></div></div>
+      ${loadWarnings}
       <section class="license-banner warning"><div><strong>High-impact administration area</strong><span>A restore replaces operational school records and protected files. Use MFA, make a current recovery backup first, and keep all users out of the system until verification completes.</span></div></section>
       <section class="panel pad backup-recovery-panel"><div class="section-title"><div><h4>Create and Download Full School Backup</h4><p>Includes academic records, users, reports, attendance, transcripts, certificates, templates, photographs and signatures. Password hashes and platform signing secrets are never exported.</p></div></div>
       <div class="button-row"><button class="button primary" id="fullSchoolBackupCreate" type="button">Create full encrypted backup</button></div>${backupHistoryHtml(backupData?.backups||[])}</section>
@@ -5048,14 +5091,40 @@
       <div class="template-information"><strong>Required sequence</strong><span>Install and license the compatible fresh system, sign in as System Administrator with MFA, create a recovery point, upload the backup, type RESTORE SCHOOL, then keep the browser open until final verification succeeds.</span></div>
       <form id="schoolRestoreForm" class="form-grid compact"><label class="field full"><span>Encrypted school backup ZIP</span><input type="file" name="backup_file" accept=".zip,application/zip" required></label><label class="field full"><span>Typed confirmation</span><input name="confirmation" autocomplete="off" placeholder="RESTORE SCHOOL" required></label><label class="field full"><span>Reason</span><textarea name="reason" minlength="10" placeholder="State why this full restoration is required" required></textarea></label><div class="full button-row"><button class="button danger" id="schoolRestoreStart" type="button">Validate and restore school data</button></div></form>
       ${restoreHistoryHtml(restoreData?.jobs||[])}</section>`;
-    byId("fullSchoolBackupCreate").onclick=createManualBackup;
-    byId("schoolRestoreStart").onclick=startSchoolRestoreImport;
+    byId("fullSchoolBackupCreate")?.addEventListener("click",createManualBackup);
+    byId("schoolRestoreStart")?.addEventListener("click",startSchoolRestoreImport);
     bindBackupHistoryControls();
   }
   function restoreHistoryHtml(jobs=[]){if(!jobs.length)return `<div class="empty"><strong>No restoration has been attempted</strong><span>Verified restore events will appear here.</span></div>`;return `<div class="table-wrap"><table><thead><tr><th>Created</th><th>Package</th><th>Status</th><th>Source</th><th>Result</th></tr></thead><tbody>${jobs.map(j=>`<tr><td>${isoDateTime(j.created_at)}</td><td><strong>${esc(j.source_filename||"-")}</strong><br><small>${readableBytes(j.package_size||0)}</small></td><td><span class="chip ${j.status==="completed"?"success":j.status==="failed"?"danger":"warning"}">${esc(statusText(j.status))}</span></td><td>${esc(j.source_school_name||"Pending validation")}<br><small>${esc(j.source_schema_version||"")}</small></td><td>${j.error_message?`<small>${esc(j.error_message)}</small>`:esc(j.verification_notes||"")}</td></tr>`).join("")}</tbody></table></div>`}
   async function sha256File(file){const hash=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());return [...new Uint8Array(hash)].map(b=>b.toString(16).padStart(2,"0")).join("")}
+  async function requireAal2ForRestore(){
+    const {data,error}=await state.client.auth.mfa.getAuthenticatorAssuranceLevel();
+    if(error)throw error;
+    if(data?.currentLevel!=="aal2")throw new Error("Multi-factor authentication required for full school restoration. Sign out, sign in again, and complete the authenticator-code step before restoring data.");
+  }
   async function waitForRestore(jobId,timeoutMs=900000){const start=Date.now();while(Date.now()-start<timeoutMs){const {data,error}=await state.client.from("school_restore_jobs").select("*").eq("id",jobId).single();if(error)throw error;if(data.status==="completed")return data;if(data.status==="failed")throw new Error(data.error_message||"School restoration failed.");await new Promise(r=>setTimeout(r,4000))}throw new Error("The restore is still running. Keep the system in maintenance mode and refresh Backup & Restore shortly.")}
-  async function startSchoolRestoreImport(){const form=byId("schoolRestoreForm"),file=form?.elements?.backup_file?.files?.[0],confirmation=String(form?.elements?.confirmation?.value||"").trim(),reason=String(form?.elements?.reason?.value||"").trim(),button=byId("schoolRestoreStart");if(!file){toast("Backup required","Choose the downloaded encrypted backup ZIP.","error");return}if(confirmation!=="RESTORE SCHOOL"){toast("Confirmation does not match","Type RESTORE SCHOOL exactly.","error");return}if(reason.length<10){toast("Reason required","Enter at least 10 characters.","error");return}if(!await confirmAction("Restore all school data",`This will replace operational school records and protected files using ${file.name}. A pre-restore recovery backup will be created first. Do not continue while other users are active.`,"Begin restoration"))return;button.disabled=true;setSync("pending","Preparing restore");try{const checksum=await sha256File(file);const {data:prep,error:prepError}=await state.client.functions.invoke("scheduled-backup",{body:{action:"prepare_restore_import",file_name:file.name,file_size:file.size,checksum,reason}});if(prepError)throw prepError;if(!prep?.path||!prep?.token||!prep?.job_id)throw new Error("Restore upload authorization was not returned.");const {error:uploadError}=await state.client.storage.from(CONFIG.backupBucket).uploadToSignedUrl(prep.path,prep.token,file,{contentType:"application/zip"});if(uploadError)throw uploadError;setSync("pending","Restoring school data");const {data:start,error:startError}=await state.client.functions.invoke("scheduled-backup",{body:{action:"execute_restore_import",job_id:prep.job_id,confirmation,reason}});if(startError)throw startError;const completed=await waitForRestore(prep.job_id);toast("School restoration completed",completed.verification_notes||"Data and protected files were restored and verified.","success",10000);setSync("online","Synced");await renderBackupRestore(state.viewToken,true)}catch(error){toast("School restoration unsuccessful",friendlyError(error),"error",12000);setSync("pending","Attention required")}finally{button.disabled=false}}
+  async function startSchoolRestoreImport(){
+    const form=byId("schoolRestoreForm"),file=form?.elements?.backup_file?.files?.[0],confirmation=String(form?.elements?.confirmation?.value||"").trim(),reason=String(form?.elements?.reason?.value||"").trim(),button=byId("schoolRestoreStart");
+    if(!file){toast("Backup required","Choose the downloaded encrypted backup ZIP.","error");return}
+    if(confirmation!=="RESTORE SCHOOL"){toast("Confirmation does not match","Type RESTORE SCHOOL exactly.","error");return}
+    if(reason.length<10){toast("Reason required","Enter at least 10 characters.","error");return}
+    if(!await confirmAction("Restore all school data",`This will replace operational school records and protected files using ${file.name}. A pre-restore recovery backup will be created first. Do not continue while other users are active.`,"Begin restoration",true))return;
+    if(!button)return;
+    button.disabled=true;setSync("pending","Preparing restore");
+    try{
+      await requireAal2ForRestore();
+      const checksum=await sha256File(file);
+      const prep=await invokeEdgeFunction("scheduled-backup",{action:"prepare_restore_import",file_name:file.name,file_size:file.size,checksum,reason});
+      if(!prep?.path||!prep?.token||!prep?.job_id)throw new Error("Restore upload authorization was not returned.");
+      const {error:uploadError}=await state.client.storage.from(CONFIG.backupBucket).uploadToSignedUrl(prep.path,prep.token,file,{contentType:"application/zip"});if(uploadError)throw uploadError;
+      setSync("pending","Restoring school data");
+      await invokeEdgeFunction("scheduled-backup",{action:"execute_restore_import",job_id:prep.job_id,confirmation,reason});
+      const completed=await waitForRestore(prep.job_id);
+      toast("School restoration completed",completed.verification_notes||"Data and protected files were restored and verified.","success",10000);setSync("online","Synced");
+      await renderBackupRestore(state.viewToken);
+    }catch(error){toast("School restoration unsuccessful",friendlyError(error),"error",12000);setSync("pending","Attention required")}
+    finally{button.disabled=false}
+  }
 
   async function renderSettings(token) {
     const school=state.boot.school||{};
@@ -5220,6 +5289,15 @@
     try{await rpc("save_backup_policy",{target_retention_days:retention,target_minimum_copies:minimum});toast("Backup policy saved",`${minimum} copies will be retained, with age-based cleanup after ${retention} days.`)}
     catch(error){toast("Policy not saved",friendlyError(error),"error")}finally{button.disabled=false}
   }
+  async function refreshBackupInterface(){
+    if(state.view==="backup_restore")await renderBackupRestore(state.viewToken);
+    else await renderSettings(state.viewToken,true);
+  }
+  function backupActionButton(eventOrButton,...ids){
+    if(eventOrButton?.currentTarget)return eventOrButton.currentTarget;
+    if(eventOrButton?.tagName)return eventOrButton;
+    return ids.map(id=>byId(id)).find(Boolean)||null;
+  }
   async function waitForBackup(backupId,timeoutMs=420000) {
     const started=Date.now();
     while(Date.now()-started<timeoutMs){
@@ -5229,31 +5307,46 @@
       if(data.status==="failed")throw new Error(data.error_message||"The full backup did not complete.");
       await new Promise(resolve=>setTimeout(resolve,3500));
     }
-    throw new Error("The backup is still processing. Refresh Settings shortly to view its final status.");
+    throw new Error("The backup is still processing. Refresh Backup & Restore shortly to view its final status.");
   }
-  async function createManualBackup() {
-    const button=byId("backupCreate");button.disabled=true;setSync("pending","Backing up");
-    try{
-      const {data,error}=await state.client.functions.invoke("scheduled-backup",{body:{action:"create",mode:"manual"}});
+  async function waitForBackupVerification(backupId,startedAt,timeoutMs=420000){
+    const started=Date.now(),threshold=new Date(startedAt||Date.now()).getTime();
+    while(Date.now()-started<timeoutMs){
+      const {data,error}=await state.client.from("backup_exports").select("verification_status,verification_checked_at,verification_notes,storage_object_counts").eq("id",backupId).single();
       if(error)throw error;
+      const checkedAt=data.verification_checked_at?new Date(data.verification_checked_at).getTime():0;
+      if(checkedAt>=threshold&&data.verification_status==="passed")return {...data,checked_objects:Object.values(data.storage_object_counts||{}).reduce((sum,value)=>sum+Number(value||0),0)};
+      if(checkedAt>=threshold&&data.verification_status==="failed")throw new Error(data.verification_notes||"Backup verification failed.");
+      await new Promise(resolve=>setTimeout(resolve,3000));
+    }
+    throw new Error("Backup verification is still processing. Refresh the page shortly to view its final result.");
+  }
+  async function createManualBackup(eventOrButton) {
+    const button=backupActionButton(eventOrButton,"backupCreate","fullSchoolBackupCreate");
+    if(!button){toast("Backup unavailable","The backup action control could not be found. Reload the application.","error");return}
+    button.disabled=true;setSync("pending","Backing up");
+    try{
+      const data=await invokeEdgeFunction("scheduled-backup",{action:"create",mode:"manual"});
       const backupId=data?.backup_id;if(!backupId)throw new Error("The backup service did not return a backup identifier.");
       toast("Full backup started","Database records and private Storage objects are being encrypted and copied.","warning",5000);
       const completed=await waitForBackup(backupId);
       toast("Full backup completed",`${Object.values(completed.storage_object_counts||{}).reduce((sum,value)=>sum+Number(value||0),0)} files protected • ${readableBytes(completed.storage_bytes||0)} storage data.`);setSync("online","Synced");
-      await renderSettings(state.viewToken,true);
-    }catch(error){toast("Backup unsuccessful",friendlyError(error),"error",8000);setSync("pending","Retry required")}
+      await refreshBackupInterface();
+    }catch(error){toast("Backup unsuccessful",friendlyError(error),"error",10000);setSync("pending","Retry required")}
     finally{button.disabled=false}
   }
   async function verifyFullBackup(backupId,button) {
+    if(!button)return;
     button.disabled=true;setSync("pending","Verifying backup");
     try{
-      const {data,error}=await state.client.functions.invoke("scheduled-backup",{body:{action:"verify",backup_id:backupId}});
-      if(error)throw error;
-      toast("Backup verification passed",`${number(data.checked_objects||0)} storage files and the complete database export passed decryption and checksum verification.`);setSync("online","Synced");
-      await renderSettings(state.viewToken,true);
-    }catch(error){toast("Backup verification failed",friendlyError(error),"error",9000);setSync("pending","Attention required")}
+      const data=await invokeEdgeFunction("scheduled-backup",{action:"verify",backup_id:backupId});
+      const result=data?.status==="processing"?await waitForBackupVerification(backupId,data.verification_started_at):data;
+      toast("Backup verification passed",`${number(result?.checked_objects||0)} storage files and the complete database export passed decryption and checksum verification.`);setSync("online","Synced");
+      await refreshBackupInterface();
+    }catch(error){toast("Backup verification failed",friendlyError(error),"error",11000);setSync("pending","Attention required")}
     finally{button.disabled=false}
   }
+
   async function downloadEncryptedBackupPackage(backupId,button) {
     if(!window.JSZip){toast("Download unavailable","The packaged ZIP library did not load.","error");return}
     if(!await confirmAction("Download Encrypted Off-site Package","This can be a large download because it contains the encrypted database and every protected Storage object in the selected backup. Keep the package and the backup encryption secret in separate secure locations.","Download package"))return;
@@ -5268,7 +5361,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.7 Final School Backup Migration Compatibility Fix Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.8 Final Backup Runtime Reliability and Product Stabilization Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5282,7 +5375,7 @@
       const note=window.prompt("Optional location or reference note (do not enter the encryption key):","Encrypted package stored in a separate secure location")||"Encrypted package stored in a separate secure location";
       await rpc("mark_backup_offsite_copy",{target_backup_id:backupId,target_note:note});
       toast("Off-site copy confirmed","The continuity record has been updated.");
-      await renderSettings(state.viewToken,true);
+      await refreshBackupInterface();
     }catch(error){toast("Off-site copy not confirmed",friendlyError(error),"error",7000)}
     finally{button.disabled=false}
   }
@@ -5382,7 +5475,7 @@
   async function runAcademicAlerts(){const button=byId("academicAlertsRun");button.disabled=true;try{const result=await rpc("run_academic_alerts",{target_term_id:byId("operationsTerm").value});toast("Academic alerts queued",`${number(result.queued)} new notification${Number(result.queued)===1?"":"s"} queued.`);await loadNotificationCount()}catch(error){toast("Alerts not queued",friendlyError(error),"error")}finally{button.disabled=false}}
   async function previewMissingReports(){const termId=byId("operationsTerm").value,classId=byId("operationsClass").value;if(!classId){toast("Select a class","Choose the class before previewing missing reports.","warning");return}try{const preview=await rpc("bulk_generate_missing_reports",{target_term_id:termId,target_class_id:classId,preview_only:true});if(!preview.missing_reports){toast("No missing reports","Every active student already has a report for this term.");return}if(!await confirmAction("Generate missing draft reports",`${number(preview.missing_reports)} missing report record(s) will be created. Existing reports will not be changed.`,"Generate reports"))return;const result=await rpc("bulk_generate_missing_reports",{target_term_id:termId,target_class_id:classId,preview_only:false});toast("Draft reports generated",`${number(result.created_reports)} report record(s) created.`);await renderOperations(state.viewToken,true)}catch(error){toast("Reports not generated",friendlyError(error),"error",7500)}}
   async function reviewCorrectionRequest(id,decision){modal(`${decision==="approved"?"Approve":"Reject"} correction request`,"Principal oversight",`<label class="field"><span>Review note</span><textarea id="correctionReviewNote" placeholder="Record the approval conditions or rejection reason"></textarea></label>`,`<button class="button ghost" id="correctionReviewCancel">Cancel</button><button class="button ${decision==="approved"?"success":"warning"}" id="correctionReviewConfirm">${decision==="approved"?"Approve":"Reject"}</button>`,"small");byId("correctionReviewCancel").onclick=closeModal;byId("correctionReviewConfirm").onclick=async()=>{const button=byId("correctionReviewConfirm");button.disabled=true;try{await rpc("review_report_correction",{target_request_id:id,decision,review_note_text:byId("correctionReviewNote").value.trim()});closeModal();toast("Correction request reviewed");await renderOperations(state.viewToken,true)}catch(error){toast("Review not saved",friendlyError(error),"error")}finally{button.disabled=false}}}
-  async function runRecoveryRehearsal(backupId){if(!backupId)return;if(!await confirmAction("Run recovery rehearsal","The latest completed encrypted backup will be decrypted and reconstructed in memory. Production records will not be overwritten.","Run rehearsal"))return;const button=byId("recoveryRun");button.disabled=true;setSync("pending","Testing recovery");try{const {data,error}=await state.client.functions.invoke("scheduled-backup",{body:{action:"recovery_test",backup_id:backupId}});if(error)throw error;toast("Recovery rehearsal passed",`${number(data.checked_tables)} tables, ${number(data.checked_rows)} rows, and ${number(data.checked_storage_objects)} storage objects verified.`);setSync("online","Synced");await renderOperations(state.viewToken,true)}catch(error){toast("Recovery rehearsal failed",friendlyError(error),"error",9000);setSync("pending","Attention required")}finally{button.disabled=false}}
+  async function runRecoveryRehearsal(backupId){if(!backupId)return;if(!await confirmAction("Run recovery rehearsal","The latest completed encrypted backup will be decrypted and reconstructed in memory. Production records will not be overwritten.","Run rehearsal"))return;const button=byId("recoveryRun");button.disabled=true;setSync("pending","Testing recovery");try{const data=await invokeEdgeFunction("scheduled-backup",{action:"recovery_test",backup_id:backupId});toast("Recovery rehearsal passed",`${number(data.checked_tables)} tables, ${number(data.checked_rows)} rows, and ${number(data.checked_storage_objects)} storage objects verified.`);setSync("online","Synced");await renderOperations(state.viewToken,true)}catch(error){toast("Recovery rehearsal failed",friendlyError(error),"error",9000);setSync("pending","Attention required")}finally{button.disabled=false}}
 
   async function renderAcademicHistory(token,force=false) {
     const visibleClasses=await visibleClassesForCurrentRole();
@@ -5927,7 +6020,7 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_7_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_8_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
