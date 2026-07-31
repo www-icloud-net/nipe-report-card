@@ -1,13 +1,15 @@
-REPORT CARD ENTERPRISE v7.2.9 FINAL REUSABLE SCHOOLS EDITION
+REPORT CARD ENTERPRISE v7.3.0 FINAL LICENSING HARDENING
 
-Deploy only the contents of this GITHUB_PAGES_FRONTEND directory to the school GitHub Pages repository.
-Preserve the production config.js values. Never publish service-role keys, secret keys, package-signing secrets, or reusable package source files.
+Deploy every file in this directory together. Do not deploy files selectively.
 
-Upgrade from v7.2.7 Final:
-1. Confirm the offline synchronisation queue shows 0 pending and 0 conflicts before replacing the frontend.
-2. No SQL file is required for this upgrade.
-3. Deploy this complete frontend directory while preserving config.js.
-4. Redeploy platform-package-manager and scheduled-backup.
-5. Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_9_FINAL.zip through the Platform Super Administrator portal.
-6. Hard-refresh all browsers or clear the previous service-worker cache.
-7. Test two school editions hosted under different repository paths and confirm their offline queues and caches remain isolated.
+MASTER PLATFORM
+- Preserve the production Supabase URL and publishable key in config.js.
+- generatedSchoolPackage must remain false.
+- Deploy all six master Edge Functions separately according to SUPABASE_DASHBOARD_SETUP.txt.
+
+GENERATED SCHOOL
+- Use the generated config.js without replacing its package, installation, tenant, project, domain, or key-binding values.
+- Deploy only admin-user-management, notification-dispatcher, scheduled-backup, and license-verifier.
+- Do not deploy platform-package-manager or license-authority.
+
+After deployment, hard-refresh browsers and confirm service-worker cache `rce-v7-3-0-final-r1`. Complete the live licence, role, offline, Storage, and report acceptance tests before production use.

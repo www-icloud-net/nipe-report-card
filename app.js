@@ -11,6 +11,12 @@
     userEmailDomain: RUNTIME_CONFIG.userEmailDomain || "nip.com",
     reportNumberPrefix: RUNTIME_CONFIG.reportNumberPrefix || "NIS",
     generatedSchoolPackage: Boolean(RUNTIME_CONFIG.generatedSchoolPackage),
+    tenantCode: RUNTIME_CONFIG.tenantCode || "",
+    packageId: RUNTIME_CONFIG.packageId || "",
+    installationId: RUNTIME_CONFIG.installationId || "",
+    projectRef: RUNTIME_CONFIG.projectRef || "",
+    authorizedDomain: RUNTIME_CONFIG.authorizedDomain || "",
+    licenseKeyId: RUNTIME_CONFIG.licenseKeyId || "",
     logoPath: RUNTIME_CONFIG.logoPath || "assets/nipe-school-logo.png",
     defaultReportTemplatePath: RUNTIME_CONFIG.defaultReportTemplatePath || "assets/approved-terminal-report-template.png",
     photoBucket: "student-photos",
@@ -63,25 +69,25 @@
 
   const NAV = [
     {id:"dashboard",label:"Dashboard",icon:"▦",subtitle:"Academic performance overview"},
-    {id:"operations",label:"Operations",icon:"◫",subtitle:"Deadlines, health, corrections, and recovery readiness",roles:["system_admin","principal"]},
+    {id:"operations",label:"Operations",icon:"◫",subtitle:"Deadlines, health, corrections, and recovery readiness",roles:["system_admin","principal"],feature:"governance"},
     {id:"licensing",label:"Platform Licensing",icon:"◇",subtitle:"Licence plans, lifecycle, compliance, and access controls",roles:["platform_super_admin"]},
     {id:"my_class",label:"My Class",icon:"▣",subtitle:"Assigned class, learners, and report progress",roles:["class_teacher"]},
-    {id:"attendance",label:"Attendance",icon:"✓",subtitle:"Daily class attendance and automatic term totals",roles:["class_teacher"]},
+    {id:"attendance",label:"Attendance",icon:"✓",subtitle:"Daily class attendance and automatic term totals",roles:["class_teacher"],feature:"attendance"},
     {id:"my_subjects",label:"My Subjects",icon:"⌘",subtitle:"Assigned subjects, classes, and assessment progress",roles:["class_teacher","subject_teacher"]},
     {id:"students",label:"Students",icon:"◉",subtitle:"Student records and enrolment",roles:["system_admin","class_teacher","subject_teacher"]},
-    {id:"history",label:"Academic History",icon:"▧",subtitle:"Cumulative transcripts, lifecycle, transfers, and verification",roles:["system_admin","principal","class_teacher","subject_teacher"]},
+    {id:"history",label:"Academic History",icon:"▧",subtitle:"Cumulative transcripts, lifecycle, transfers, and verification",roles:["system_admin","principal","class_teacher","subject_teacher"],feature:"academic_history"},
     {id:"teachers",label:"Teachers",icon:"♜",subtitle:"Teacher records and assignments",permission:"manage_teachers"},
     {id:"headteachers",label:"Principals",icon:"★",subtitle:"Principal records and appointments",permission:"manage_headteachers"},
     {id:"academics",label:"Academics",icon:"⌘",subtitle:"Academic structure and assessment",permission:"manage_academics"},
     {id:"delegations",label:"Emergency Delegation",icon:"⚑",subtitle:"Temporary academic access, continuity, and Principal oversight",roles:["system_admin","principal"]},
-    {id:"reports",label:"Report Cards",icon:"▤",subtitle:"Assessment, approval, and publication",hideFor:["parent_guardian"]},
-    {id:"certificates",label:"Certificates",icon:"✦",subtitle:"Promotion, completion, and teacher recognition awards",roles:["system_admin","principal"]},
-    {id:"insights",label:"Insights",icon:"◩",subtitle:"Performance, attendance, completion, and class trends",roles:["system_admin","principal","class_teacher","subject_teacher"]},
+    {id:"reports",label:"Report Cards",icon:"▤",subtitle:"Assessment, approval, and publication",hideFor:["parent_guardian"],feature:"report_cards"},
+    {id:"certificates",label:"Certificates",icon:"✦",subtitle:"Promotion, completion, and teacher recognition awards",roles:["system_admin","principal"],feature:"certificates"},
+    {id:"insights",label:"Insights",icon:"◩",subtitle:"Performance, attendance, completion, and class trends",roles:["system_admin","principal","class_teacher","subject_teacher"],feature:"analytics"},
     {id:"children",label:"My Children",icon:"♥",subtitle:"Published academic records",roles:["parent_guardian"]},
     {id:"users",label:"Users and Access",icon:"♟",subtitle:"Roles, classes, and security",permission:"manage_users"},
-    {id:"notifications",label:"Notifications",icon:"◆",subtitle:"School and workflow alerts"},
-    {id:"compliance",label:"Privacy and Security",icon:"◈",subtitle:"Retention, privacy requests, security events, and verification",roles:["system_admin","principal"]},
-    {id:"audit",label:"Audit Trail",icon:"◎",subtitle:"Record changes and accountability",permission:"view_audit"},
+    {id:"notifications",label:"Notifications",icon:"◆",subtitle:"School and workflow alerts",feature:"notifications"},
+    {id:"compliance",label:"Privacy and Security",icon:"◈",subtitle:"Retention, privacy requests, security events, and verification",roles:["system_admin","principal"],feature:"governance"},
+    {id:"audit",label:"Audit Trail",icon:"◎",subtitle:"Record changes and accountability",permission:"view_audit",feature:"governance"},
     {id:"settings",label:"Settings",icon:"⚙",subtitle:"School identity, security, and resilience",roles:["system_admin"]},
     {id:"github",label:"GitHub Navigator",icon:"⌁",subtitle:"Protected package generation and deployment controls",roles:["platform_super_admin"]}
   ];
@@ -105,7 +111,8 @@
     passwordChangeRequired:false, userAccessEditingUserId:"",
     workspace:null, studentClassFilter:"", reportClassFilter:"", reportTemplates:null, reportTemplatesLoadedAt:0,
     initialized:false, realtimeConnected:0, lastSync:null, pending:0, conflicts:0,
-    packageLogoPreviewUrl:"", packageGeneratorBusy:false, bulkReportPackageBusy:false,
+    packageLogoPreviewUrl:"", packageGeneratorBusy:false, packageGenerationKey:"", platformPackageOffset:0, platformPackageLimit:50, platformPackageSearch:"", bulkReportPackageBusy:false,
+    licenseRefreshTimer:null, licenseRefreshBusy:false, lastLicenseVerifiedAt:0,
     attendanceTermId:"", attendanceClassId:"", attendanceDate:"", attendanceData:null,
     licenseConsole:null, platformPackageConsole:null, delegationConsole:null, myEmergencyDelegations:[],
     operationsConsole:null, historyStudentId:"", historyData:null, historyStudents:null, complianceConsole:null, analyticsData:null,
@@ -132,6 +139,7 @@
   const can = key => Boolean(state.boot?.permissions?.[key]);
   const licenseState = () => state.boot?.license || {};
   const licenseCanWrite = () => licenseState().write_allowed !== false;
+  const licenseFeatureEnabled = code => role()==="platform_super_admin" || licenseState()?.plan?.feature_flags?.[code] === true;
   function dateTimeLocalValue(value) {
     if(!value)return "";
     const date=new Date(value);if(Number.isNaN(date.getTime()))return "";
@@ -293,6 +301,10 @@
     if(msg.includes("PLATFORM_ACCESS_LOCKED:")) return msg.split("PLATFORM_ACCESS_LOCKED:").slice(1).join(":").trim()||"Platform access has been restricted.";
     if(msg.includes("LICENSE_WRITE_RESTRICTED:")) return msg.split("LICENSE_WRITE_RESTRICTED:").slice(1).join(":").trim()||"The current licence permits read-only access.";
     if(msg.includes("LICENSE_CAPACITY_REACHED:")) return msg.split("LICENSE_CAPACITY_REACHED:").slice(1).join(":").trim();
+    if(msg.includes("LICENSE_FEATURE_NOT_INCLUDED:")) return msg.split("LICENSE_FEATURE_NOT_INCLUDED:").slice(1).join(":").trim()||"This feature is not included in the current licence plan.";
+    if(msg.includes("LICENSE_DOWNGRADE_BLOCKED:")) return msg.split("LICENSE_DOWNGRADE_BLOCKED:").slice(1).join(":").trim()||"Current usage exceeds the selected plan capacity.";
+    if(msg.toLowerCase().includes("central licence authority")) return "The central licence authority could not confirm this generated package. Check connectivity, deployment binding, and package revocation status.";
+    if(msg.toLowerCase().includes("licence package has been revoked")||msg.toLowerCase().includes("licence has been revoked by the platform authority")) return "This generated school package has been revoked by the platform authority.";
     if(msg.toLowerCase().includes("platform super administrator access required")) return "Only a Platform Super Administrator can manage licensing and access controls.";
     if(msg.toLowerCase().includes("permission denied for function can_publish_report")) return "Apply the v6.8.2 continuation in 07_schema.sql, then reload the system.";
     if(msg.includes("42501")||msg.toLowerCase().includes("access denied")) return "You do not have permission to complete this operation.";
@@ -511,8 +523,11 @@
     state.session=session;
     state.client.auth.onAuthStateChange(async(event,newSession)=>{
       state.session=newSession;
-      if(event==="SIGNED_OUT"){state.initialized=false;disconnectRealtime();showOnly("authView");}
-      if(event==="TOKEN_REFRESHED"&&newSession) await state.client.realtime.setAuth(newSession.access_token).catch(()=>{});
+      if(event==="SIGNED_OUT"){stopGeneratedLicenseRefresh();state.initialized=false;disconnectRealtime();showOnly("authView");}
+      if(event==="TOKEN_REFRESHED"&&newSession){
+        await state.client.realtime.setAuth(newSession.access_token).catch(()=>{});
+        if(CONFIG.generatedSchoolPackage&&state.initialized)setTimeout(()=>refreshGeneratedLicenseBinding(true),0);
+      }
     });
     if(session) await startAuthenticated();
     else {showOnly("authView");setLoading(false);}
@@ -531,21 +546,54 @@
     finally{button.disabled=false;}
   }
   async function logout() {
+    stopGeneratedLicenseRefresh();
     disconnectRealtime();
     await state.client?.auth.signOut();
-    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.delegationConsole=null;state.myEmergencyDelegations=[];state.operationsConsole=null;state.historyStudentId="";state.historyData=null;state.historyStudents=null;state.complianceConsole=null;state.analyticsData=null;state.certificateConsole=null;state.certificateBatch=null;state.certificateSettingsTemplates=[];state.certificateTemplateCanvases.clear();
+    state.boot=null;state.session=null;state.initialized=false;state.reportTemplates=null;state.reportTemplatesLoadedAt=0;state.licenseConsole=null;state.platformPackageConsole=null;state.platformPackageOffset=0;state.platformPackageSearch="";state.packageGenerationKey="";state.licenseRefreshBusy=false;state.lastLicenseVerifiedAt=0;state.delegationConsole=null;state.myEmergencyDelegations=[];state.operationsConsole=null;state.historyStudentId="";state.historyData=null;state.historyStudents=null;state.complianceConsole=null;state.analyticsData=null;state.certificateConsole=null;state.certificateBatch=null;state.certificateSettingsTemplates=[];state.certificateTemplateCanvases.clear();
     state.templateUrls.clear();state.templateCanvases.clear();
     showOnly("authView");setLoading(false);
+  }
+
+  async function refreshGeneratedLicenseBinding(silent=false) {
+    if(!CONFIG.generatedSchoolPackage||!state.session||state.licenseRefreshBusy)return true;
+    state.licenseRefreshBusy=true;
+    try{
+      const {data:verification,error:verificationError}=await state.client.functions.invoke("license-verifier",{body:{action:"verify"}});
+      if(verificationError||verification?.ok!==true)throw new Error(verification?.error||verificationError?.message||"Generated package licence verification failed");
+      const {data:binding,error:bindingError}=await state.client.functions.invoke("license-verifier",{body:{action:"bind"}});
+      if(bindingError||binding?.ok!==true||binding?.binding_verified!==true)throw new Error(binding?.error||bindingError?.message||"Generated package installation binding failed");
+      state.lastLicenseVerifiedAt=Date.now();return true;
+    }catch(error){
+      if(!silent)throw error;
+      await reportClientError(error,{source:"generated_license_refresh"});
+      toast("Licence verification required",friendlyError(error),"error",8500);
+      return false;
+    }finally{state.licenseRefreshBusy=false}
+  }
+  function stopGeneratedLicenseRefresh(){if(state.licenseRefreshTimer){clearInterval(state.licenseRefreshTimer);state.licenseRefreshTimer=null}}
+  function startGeneratedLicenseRefresh(){
+    stopGeneratedLicenseRefresh();
+    if(!CONFIG.generatedSchoolPackage)return;
+    state.licenseRefreshTimer=setInterval(()=>refreshGeneratedLicenseBinding(true),4*60*60*1000);
   }
 
   async function startAuthenticated() {
     setLoading(true);
     try {
+      if(CONFIG.generatedSchoolPackage){
+        const {data:verification,error:verificationError}=await state.client.functions.invoke("license-verifier",{body:{action:"verify"}});
+        if(verificationError||verification?.ok!==true)throw new Error(verification?.error||verificationError?.message||"Generated package licence verification failed");
+      }
       await rpc("ensure_current_user_profile");
+      if(CONFIG.generatedSchoolPackage){
+        const {data:binding,error:bindingError}=await state.client.functions.invoke("license-verifier",{body:{action:"bind"}});
+        if(bindingError||binding?.ok!==true||binding?.binding_verified!==true)throw new Error(binding?.error||bindingError?.message||"Generated package installation binding failed");
+      }
       state.boot=await rpc("get_bootstrap_data");
       if(!state.boot?.profile?.active) throw new Error("Account inactive");
       const verified=await ensureMfa();
       if(!verified){setLoading(false);return;}
+      state.lastLicenseVerifiedAt=CONFIG.generatedSchoolPackage?Date.now():0;
       await continueAuthenticatedSession();
     } catch(error) {
       await reportClientError(error,{source:"bootstrap"});
@@ -647,6 +695,7 @@
     await loadNotificationCount();
     await flushOutbox();
     await navigate("dashboard",true);
+    startGeneratedLicenseRefresh();
     setLoading(false);
   }
   function renderBrand() {
@@ -664,9 +713,11 @@
     const ordered=ROLE_NAV_IDS[role()]||["dashboard"];
     return ordered.map(id=>NAV.find(item=>item.id===id)).filter(item=>{
       if(!item)return false;
+      if(CONFIG.generatedSchoolPackage&&["licensing","github"].includes(item.id))return false;
       if(item.permission&&!can(item.permission))return false;
       if(item.roles&&!item.roles.includes(role()))return false;
       if(item.hideFor?.includes(role()))return false;
+      if(item.feature&&!licenseFeatureEnabled(item.feature))return false;
       return true;
     });
   }
@@ -4794,7 +4845,7 @@
     if(force||!state.licenseConsole)state.licenseConsole=await rpc("get_platform_license_console");
     if(token!==state.viewToken)return;
     const data=state.licenseConsole||{},snapshot=data.snapshot||{},license=data.license||{},plan=snapshot.plan||{};
-    const plans=data.plans||[],usage=data.usage||{},locks=data.active_locks||[],events=data.recent_events||[],admins=data.platform_admins||[];
+    const plans=data.plans||[],usage=data.usage||{},locks=data.active_locks||[],events=data.recent_events||[],admins=data.platform_admins||[],authorities=data.distribution_authorities||[],canManageDistributors=data.distribution_authority?.active===true&&data.distribution_authority?.can_revoke===true;
     const status=snapshot.computed_status||license.status||"unknown";
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>Platform Licensing Control</h3><p>Manage the installation licence, compliance state, capacity, and access restrictions.</p></div><button class="button ghost" id="licenseRefresh">Refresh</button></div>
@@ -4828,11 +4879,13 @@
             ${licenceUsageMetric("Active students",usage.active_students,plan.max_students)}
             ${licenceUsageMetric("Active teachers",usage.active_teachers,plan.max_teachers)}
             ${licenceUsageMetric("System administrators",usage.active_system_admins,plan.max_system_admins)}
+            ${licenceUsageMetric("Guardians",usage.active_guardians,plan.max_guardians)}
+            ${licenceUsageMetric("Storage (MB)",usage.storage_mb,plan.max_storage_mb)}
             <div class="metric"><span>Published reports</span><strong>${number(usage.published_reports)}</strong><small>Historical total</small></div>
           </div>
           <div class="hr"></div>
           <div class="chip-list">${Object.entries(plan.feature_flags||{}).filter(([,enabled])=>enabled).map(([key])=>`<span class="chip">${esc(key.replaceAll("_"," "))}</span>`).join("")||'<span class="chip">No enabled features</span>'}</div>
-          <div class="template-information" style="margin-top:18px"><strong>Capacity enforcement</strong><span>Student, teacher, and System Administrator limits are enforced on the server. Existing records are never deleted when a limit or licence state changes.</span></div>
+          <div class="template-information" style="margin-top:18px"><strong>Capacity enforcement</strong><span>Student, teacher, guardian, System Administrator, and school Storage limits are enforced on the server. Existing records are never deleted when a limit or licence state changes.</span></div>
         </section>
         <section class="panel pad">
           <div class="section-title"><div><h4>Access lock control</h4><p>Use read-only mode before a complete denial unless a serious compliance or security condition requires full restriction.</p></div></div>
@@ -4849,12 +4902,17 @@
         </section>
         <section class="panel pad">
           <div class="section-title"><div><h4>Platform Super Administrators</h4><p>These accounts are isolated from school academic portals and must use multi-factor authentication.</p></div></div>
-          ${admins.length?`<div class="record-list">${admins.map(item=>`<article class="license-admin-row"><div><strong>${esc(item.full_name||"Platform administrator")}</strong><span>${esc(item.email||"")}</span><small>${item.active?"Active":"Inactive"} • MFA ${item.mfa_required?"required":"not configured"} • Last seen ${esc(isoDateTime(item.last_seen_at))}</small></div></article>`).join("")}</div>`:`<div class="empty"><strong>No Platform Super Administrator profile found</strong></div>`}
+          ${admins.length?`<div class="record-list">${admins.map(item=>{const authority=authorities.find(entry=>entry.actor_id===item.id);return `<article class="license-admin-row"><div><strong>${esc(item.full_name||"Platform administrator")}</strong><span>${esc(item.email||"")}</span><small>${item.active?"Active":"Inactive"} • MFA ${item.mfa_required?"required":"not configured"} • Distributor ${authority?.active?"active":"not active"} • Last seen ${esc(isoDateTime(item.last_seen_at))}</small></div><button class="button outline small" data-distributor-edit="${attr(item.id)}" ${canManageDistributors?"":"disabled"}>Distributor access</button></article>`}).join("")}</div>`:`<div class="empty"><strong>No Platform Super Administrator profile found</strong></div>`}
           <div class="template-information"><strong>Account provisioning</strong><span>Create a separate Supabase Authentication user, then run PLATFORM_SUPER_ADMIN_SETUP.sql with that user’s email. School System Administrators cannot grant themselves this role.</span></div>
         </section>
       </div>
+      <section class="panel" style="margin-top:18px">
+        <div class="panel-header"><div><h3>Plan governance</h3><p>Versioned plan capacities, feature entitlements, and school-specific overrides</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Plan</th><th>Revision</th><th>Capacity</th><th>Features</th><th>Status</th><th>Action</th></tr></thead><tbody>${plans.map(item=>`<tr><td><strong>${esc(item.name)}</strong><small class="table-subtext">${esc(item.code)} • ${esc(item.billing_cycle)}</small></td><td>${number(item.revision||1)}</td><td>${item.max_students==null?"Unlimited":number(item.max_students)} students<br><small>${item.max_teachers==null?"Unlimited":number(item.max_teachers)} teachers • ${item.max_system_admins==null?"Unlimited":number(item.max_system_admins)} admins</small></td><td>${Object.values(item.feature_flags||{}).filter(Boolean).length} enabled</td><td>${item.active?"Active":"Inactive"}</td><td><button class="button outline small" data-license-plan-edit="${attr(item.id)}">Edit plan</button></td></tr>`).join("")}</tbody></table></div>
+        <div class="button-row" style="padding:16px"><button class="button secondary" id="licensePlanCreate" type="button">Create plan</button><button class="button outline" id="licenseOverrideEdit" type="button">School entitlement override</button></div>
+      </section>
       <section class="panel platform-history-panel">
-        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 100 platform events</p></div><div class="button-row"><button class="button danger small" id="licenseHistoryClear" type="button" ${events.length?"":"disabled"}>Clear all history</button></div></div>
+        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 200 platform events</p></div><div class="button-row"><button class="button danger small" id="licenseHistoryClear" type="button" ${events.length?"":"disabled"}>Archive history</button></div></div>
         <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Actor</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(platformEventSummary(item))}</strong></td><td>${esc(item.event_reason||"—")}</td><td>${esc(item.actor_name||item.actor_id||"System")}</td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No licensing events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
     bindPlatformSectionTabs();
@@ -4862,8 +4920,35 @@
     byId("platformLicenseSave").onclick=savePlatformLicense;
     byId("platformLockApply").onclick=applyPlatformAccessLock;
     byId("licenseHistoryClear")?.addEventListener("click",clearPlatformLicenseHistory);
+    byId("licensePlanCreate")?.addEventListener("click",()=>editPlatformLicensePlan(""));
+    byId("licenseOverrideEdit")?.addEventListener("click",editPlatformLicenseOverride);
+    $$('[data-license-plan-edit]').forEach(button=>button.onclick=()=>editPlatformLicensePlan(button.dataset.licensePlanEdit));
+    if(canManageDistributors)$$('[data-distributor-edit]').forEach(button=>button.onclick=()=>editDistributionAuthority(button.dataset.distributorEdit));
     $$('[data-release-license-lock]').forEach(button=>button.onclick=()=>releasePlatformAccessLock(button.dataset.releaseLicenseLock));
   }
+  function editDistributionAuthority(actorId){
+    const admin=(state.licenseConsole?.platform_admins||[]).find(item=>item.id===actorId)||{},current=(state.licenseConsole?.distribution_authorities||[]).find(item=>item.actor_id===actorId)||{};
+    modal("Platform Distributor Authority",`Manage package-generation authority for ${admin.full_name||"this Platform Super Administrator"}. Enterprise School licensing alone never grants this capability.`,`<form id="distributionAuthorityForm" class="form-grid"><label class="check-row"><input name="active" type="checkbox" ${current.active?"checked":""}><span>Authority active</span></label><label class="check-row"><input name="can_generate" type="checkbox" ${current.can_generate!==false?"checked":""}><span>Can generate packages</span></label><label class="check-row"><input name="can_revoke" type="checkbox" ${current.can_revoke!==false?"checked":""}><span>Can revoke, restore, and delete packages</span></label><label class="field full"><span>Notes</span><textarea name="notes">${esc(current.notes||"")}</textarea></label></form>`,`<button class="button ghost" id="distributionAuthorityCancel" type="button">Cancel</button><button class="button primary" id="distributionAuthoritySave" type="button">Save authority</button>`,"small");
+    byId("distributionAuthorityCancel").onclick=closeModal;byId("distributionAuthoritySave").onclick=async()=>{const form=byId("distributionAuthorityForm"),button=byId("distributionAuthoritySave");button.disabled=true;try{state.licenseConsole=await rpc("platform_set_distribution_authority",{target_actor_id:actorId,active_value:form.elements.active.checked,can_generate_value:form.elements.can_generate.checked,can_revoke_value:form.elements.can_revoke.checked,notes_text:form.elements.notes.value.trim()});closeModal();toast("Distributor authority updated");await renderLicensing(state.viewToken)}catch(error){toast("Authority not updated",friendlyError(error),"error",8000)}finally{button.disabled=false}};
+  }
+
+  function editPlatformLicensePlan(planId){
+    const data=state.licenseConsole||{},plan=(data.plans||[]).find(item=>item.id===planId)||{feature_flags:{},billing_cycle:"annual",default_term_days:365,grace_days:30,support_level:"standard",active:true};
+    modal(planId?"Edit Licence Plan":"Create Licence Plan","Every saved change creates an immutable plan revision.",`<form id="licensePlanForm" class="form-grid">
+      <input type="hidden" name="id" value="${attr(plan.id||"")}"><label class="field"><span>Code</span><input name="code" value="${attr(plan.code||"")}" ${planId?"readonly":""} required></label><label class="field"><span>Name</span><input name="name" value="${attr(plan.name||"")}" required></label>
+      <label class="field full"><span>Description</span><textarea name="description">${esc(plan.description||"")}</textarea></label><label class="field"><span>Billing cycle</span><select name="billing_cycle">${["monthly","annual","custom"].map(value=>`<option value="${value}" ${value===plan.billing_cycle?"selected":""}>${value}</option>`).join("")}</select></label><label class="field"><span>Support level</span><select name="support_level">${["standard","priority","enterprise","custom"].map(value=>`<option value="${value}" ${value===plan.support_level?"selected":""}>${value}</option>`).join("")}</select></label>
+      <label class="field"><span>Max students</span><input name="max_students" type="number" min="1" value="${attr(plan.max_students??"")}" placeholder="Unlimited"></label><label class="field"><span>Max teachers</span><input name="max_teachers" type="number" min="1" value="${attr(plan.max_teachers??"")}" placeholder="Unlimited"></label><label class="field"><span>Max System Administrators</span><input name="max_system_admins" type="number" min="1" value="${attr(plan.max_system_admins??"")}" placeholder="Unlimited"></label><label class="field"><span>Max guardians</span><input name="max_guardians" type="number" min="1" value="${attr(plan.max_guardians??"")}" placeholder="Unlimited"></label><label class="field"><span>Max Storage (MB)</span><input name="max_storage_mb" type="number" min="1" value="${attr(plan.max_storage_mb??"")}" placeholder="Unlimited"></label><label class="field"><span>Default term days</span><input name="default_term_days" type="number" min="1" value="${attr(plan.default_term_days||365)}"></label><label class="field"><span>Grace days</span><input name="grace_days" type="number" min="0" max="365" value="${attr(plan.grace_days??30)}"></label>
+      <label class="field full"><span>Feature flags JSON</span><textarea name="feature_flags" required>${esc(JSON.stringify(plan.feature_flags||{},null,2))}</textarea><small>Use only feature codes shown in the feature catalogue. Distribution authority cannot be added here.</small></label>
+      <label class="check-row"><input name="perpetual_allowed" type="checkbox" ${plan.perpetual_allowed?"checked":""}><span>Allow perpetual licences</span></label><label class="check-row"><input name="active" type="checkbox" ${plan.active!==false?"checked":""}><span>Plan active</span></label><label class="field full"><span>Revision reason</span><input name="reason" minlength="5" required></label>
+    </form>`,`<button class="button ghost" id="licensePlanCancel" type="button">Cancel</button><button class="button primary" id="licensePlanSave" type="button">Save plan revision</button>`);
+    byId("licensePlanCancel").onclick=closeModal;byId("licensePlanSave").onclick=async()=>{const form=byId("licensePlanForm");if(!form.reportValidity())return;const values=formObject(form);let feature_flags;try{feature_flags=JSON.parse(values.feature_flags)}catch{toast("Plan not saved","Feature flags must be valid JSON.","error");return}const button=byId("licensePlanSave");button.disabled=true;try{state.licenseConsole=await rpc("platform_upsert_license_plan",{payload:{...values,feature_flags,perpetual_allowed:form.elements.perpetual_allowed.checked,active:form.elements.active.checked}});closeModal();toast("Plan revision saved");await renderLicensing(state.viewToken)}catch(error){toast("Plan not saved",friendlyError(error),"error",8000)}finally{button.disabled=false}};
+  }
+  function editPlatformLicenseOverride(){
+    const current=state.licenseConsole?.active_override||{};
+    modal("School Entitlement Override","Overrides apply only to this installation and are fully audited.",`<form id="licenseOverrideForm" class="form-grid"><label class="field"><span>Max students override</span><input name="max_students" type="number" min="1" value="${attr(current.max_students??"")}" placeholder="Use plan limit"></label><label class="field"><span>Max teachers override</span><input name="max_teachers" type="number" min="1" value="${attr(current.max_teachers??"")}" placeholder="Use plan limit"></label><label class="field"><span>Max System Administrators override</span><input name="max_system_admins" type="number" min="1" value="${attr(current.max_system_admins??"")}" placeholder="Use plan limit"></label><label class="field"><span>Max guardians override</span><input name="max_guardians" type="number" min="1" value="${attr(current.max_guardians??"")}" placeholder="Use plan limit"></label><label class="field"><span>Max Storage override (MB)</span><input name="max_storage_mb" type="number" min="1" value="${attr(current.max_storage_mb??"")}" placeholder="Use plan limit"></label><label class="field full"><span>Feature overrides JSON</span><textarea name="feature_overrides">${esc(JSON.stringify(current.feature_overrides||{},null,2))}</textarea></label><label class="field full"><span>Reason</span><input name="reason" minlength="5" required></label></form>`,`<button class="button ghost" id="licenseOverrideCancel" type="button">Cancel</button><button class="button primary" id="licenseOverrideSave" type="button">Apply override</button>`,"small");
+    byId("licenseOverrideCancel").onclick=closeModal;byId("licenseOverrideSave").onclick=async()=>{const form=byId("licenseOverrideForm");if(!form.reportValidity())return;const values=formObject(form);let feature_overrides;try{feature_overrides=JSON.parse(values.feature_overrides||"{}") }catch{toast("Override not saved","Feature overrides must be valid JSON.","error");return}const button=byId("licenseOverrideSave");button.disabled=true;try{state.licenseConsole=await rpc("platform_set_license_override",{feature_overrides,max_students_value:values.max_students?Number(values.max_students):null,max_teachers_value:values.max_teachers?Number(values.max_teachers):null,max_system_admins_value:values.max_system_admins?Number(values.max_system_admins):null,max_guardians_value:values.max_guardians?Number(values.max_guardians):null,max_storage_mb_value:values.max_storage_mb?Number(values.max_storage_mb):null,reason_text:values.reason.trim()});closeModal();toast("Entitlement override applied");await renderLicensing(state.viewToken)}catch(error){toast("Override not saved",friendlyError(error),"error",8000)}finally{button.disabled=false}};
+  }
+
   async function savePlatformLicense() {
     const form=byId("platformLicenseForm"),button=byId("platformLicenseSave");if(!form?.reportValidity())return;
     const values=formObject(form);button.disabled=true;button.textContent="Saving";
@@ -4891,19 +4976,21 @@
     catch(error){toast("Lock not released",friendlyError(error),"error",7500)}
   }
   function clearPlatformLicenseHistory(){
-    modal("Clear Licence and Compliance History","This permanently removes all licence events and licence-verification logs. Current licence settings and active locks are not changed.",`<div class="destructive-confirmation"><label class="field"><span>Reason</span><textarea id="licenseHistoryClearReason" minlength="5" required placeholder="Why is this history being cleared?"></textarea></label><label class="field"><span>Type CLEAR to confirm</span><input id="licenseHistoryClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="licenseHistoryClearCancel" type="button">Cancel</button><button class="button danger" id="licenseHistoryClearConfirm" type="button">Clear permanently</button>`,"small");
+    modal("Archive Licence and Compliance History","This creates a permanent audit checkpoint without deleting any event or verification record.",`<div class="destructive-confirmation"><label class="field"><span>Archive reason</span><textarea id="licenseHistoryClearReason" minlength="5" required placeholder="Why is this archive checkpoint being recorded?"></textarea></label><label class="field"><span>Type ARCHIVE to confirm</span><input id="licenseHistoryClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="licenseHistoryClearCancel" type="button">Cancel</button><button class="button primary" id="licenseHistoryClearConfirm" type="button">Record archive</button>`,"small");
     byId("licenseHistoryClearCancel").onclick=closeModal;
     byId("licenseHistoryClearConfirm").onclick=async()=>{
       const reason=byId("licenseHistoryClearReason").value.trim(),confirmation=byId("licenseHistoryClearText").value.trim();
-      if(reason.length<5||confirmation!=="CLEAR"){toast("History not cleared","Enter a reason and type CLEAR exactly.","error");return}
-      const button=byId("licenseHistoryClearConfirm");button.disabled=true;button.textContent="Clearing";
-      try{state.licenseConsole=await rpc("platform_clear_license_history",{reason_text:reason,confirmation_text:confirmation});closeModal();toast("Licence history cleared");await renderLicensing(state.viewToken)}
-      catch(error){toast("History not cleared",friendlyError(error),"error",8000)}finally{button.disabled=false;button.textContent="Clear permanently"}
+      if(reason.length<5||confirmation!=="ARCHIVE"){toast("Archive not recorded","Enter a reason and type ARCHIVE exactly.","error");return}
+      const button=byId("licenseHistoryClearConfirm");button.disabled=true;button.textContent="Archiving";
+      try{state.licenseConsole=await rpc("platform_clear_license_history",{reason_text:reason,confirmation_text:confirmation});closeModal();toast("Audit archive recorded");await renderLicensing(state.viewToken)}
+      catch(error){toast("Archive not recorded",friendlyError(error),"error",8000)}finally{button.disabled=false;button.textContent="Record archive"}
     };
   }
 
   async function renderSettings(token) {
     const school=state.boot.school||{};
+    const brandingEnabled=licenseFeatureEnabled("custom_branding");
+    const brandingDisabled=!can("manage_users")||!brandingEnabled;
     let health=null,readiness=null,backupData=null,templates=[],templateLoadError="";
     try{templates=await loadReportCardTemplates(true)}catch(error){templateLoadError=friendlyError(error)}
     try{health=await rpc("system_health")}catch(_){}
@@ -4927,10 +5014,11 @@
             <label class="field"><span>User email domain</span><input name="user_email_domain" value="${attr(schoolEmailDomain(school))}" placeholder="school.edu.gh" ${!can("manage_users")?"disabled":""}><small>Used for automatically generated user account email addresses.</small></label>
             <label class="field"><span>Time zone</span><input name="timezone" value="${attr(school.timezone||"Africa/Accra")}" ${!can("manage_users")?"disabled":""}></label>
             <label class="field full"><span>Verification base URL</span><input name="verification_base_url" value="${attr(school.verification_base_url||"")}" ${!can("manage_users")?"disabled":""}></label>
-            <label class="field"><span>Primary colour</span><input type="color" name="primary_colour" value="${attr(school.primary_colour||"#082d70")}" ${!can("manage_users")?"disabled":""}></label>
-            <label class="field"><span>Accent colour</span><input type="color" name="accent_colour" value="${attr(school.accent_colour||"#f0b51d")}" ${!can("manage_users")?"disabled":""}></label>
-            <label class="field"><span>Report body font</span><select name="report_body_font" ${!can("manage_users")?"disabled":""}>${reportFontOptionsHtml(school.report_body_font||"Times New Roman")}</select></label>
-            <label class="field"><span>Report body font size</span><input type="number" name="report_body_font_size" min="8" max="16" step="0.5" value="${attr(school.report_body_font_size??11)}" ${!can("manage_users")?"disabled":""}><small>Applied to generated report data and embedded in the downloaded PDF. Default: 11 pt.</small></label>
+            <label class="field"><span>Primary colour</span><input type="color" name="primary_colour" value="${attr(school.primary_colour||"#082d70")}" ${brandingDisabled?"disabled":""}></label>
+            <label class="field"><span>Accent colour</span><input type="color" name="accent_colour" value="${attr(school.accent_colour||"#f0b51d")}" ${brandingDisabled?"disabled":""}></label>
+            <label class="field"><span>Report body font</span><select name="report_body_font" ${brandingDisabled?"disabled":""}>${reportFontOptionsHtml(school.report_body_font||"Times New Roman")}</select></label>
+            <label class="field"><span>Report body font size</span><input type="number" name="report_body_font_size" min="8" max="16" step="0.5" value="${attr(school.report_body_font_size??11)}" ${brandingDisabled?"disabled":""}><small>Applied to generated report data and embedded in the downloaded PDF. Default: 11 pt.</small></label>
+            ${can("manage_users")&&!brandingEnabled?`<div class="full"><p class="help-text">Colours, logo, and report typography are locked because Custom Branding is not included in the current licence. School identity and contact details remain editable.</p></div>`:""}
             ${can("manage_users")?`<div class="full"><button class="button primary" id="schoolSave" type="button">Save identity and report appearance</button></div>`:""}
           </form>
         </section>
@@ -4987,10 +5075,14 @@
   async function saveSchoolSettings() {
     const form=byId("schoolForm"),values=formObject(form),button=byId("schoolSave");button.disabled=true;
     try{
-      if(!Object.prototype.hasOwnProperty.call(REPORT_FONT_OPTIONS,values.report_body_font))throw new Error("Choose a supported report body font.");
-      const reportFontSize=Number(values.report_body_font_size);
-      if(!Number.isFinite(reportFontSize)||reportFontSize<8||reportFontSize>16)throw new Error("Report body font size must be between 8 and 16 points.");
-      values.report_body_font_size=Math.round(reportFontSize*2)/2;
+      if(licenseFeatureEnabled("custom_branding")){
+        if(!Object.prototype.hasOwnProperty.call(REPORT_FONT_OPTIONS,values.report_body_font))throw new Error("Choose a supported report body font.");
+        const reportFontSize=Number(values.report_body_font_size);
+        if(!Number.isFinite(reportFontSize)||reportFontSize<8||reportFontSize>16)throw new Error("Report body font size must be between 8 and 16 points.");
+        values.report_body_font_size=Math.round(reportFontSize*2)/2;
+      }else{
+        delete values.primary_colour;delete values.accent_colour;delete values.report_body_font;delete values.report_body_font_size;delete values.logo_url;
+      }
       values.user_email_domain=String(values.user_email_domain||"").trim().toLowerCase();
       if(!/^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(values.user_email_domain))throw new Error("Enter a valid user email domain, for example school.edu.gh.");
       values.report_number_prefix=String(values.report_number_prefix||"").trim().toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,12);
@@ -5106,7 +5198,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.2.9 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.0 Final Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5385,7 +5477,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.2.9 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.0 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5426,7 +5518,7 @@
   }
 
 
-  // Report Card Enterprise v7.2.9 Final report presentation and production audit release
+  // Report Card Enterprise v7.3.0 Final report presentation and production audit release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -5754,21 +5846,21 @@
 
   async function renderGithubNavigator(token,force=false) {
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
-    if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status");
+    if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status",{offset:state.platformPackageOffset,limit:state.platformPackageLimit,search:state.platformPackageSearch});
     if(token!==state.viewToken)return;
-    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[];
+    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true;
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
       ${platformSectionTabs("github")}
-      <section class="license-banner warning"><div><strong>Protected platform operation</strong><span>School System Administrators cannot view this section, call the package service, access private package buckets, or download reusable source packages.</span></div></section>
+      <section class="license-banner warning"><div><strong>Protected platform operation</strong><span>School System Administrators cannot view this section, call the package service, access private package buckets, or download reusable source packages. Your distributor permissions: generation ${canGenerate?"enabled":"disabled"}; revocation and audit administration ${canRevoke?"enabled":"disabled"}.</span></div></section>
       <div class="platform-package-workspace">
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_2_9_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_0_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
-              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
-              <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button">Install or replace template</button></div>
+              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
+              <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
             </form>
           </section>
           <section class="panel pad"><div class="section-title"><div><h4>Deployment Navigator</h4><p>Use these links only after generating and downloading an authorized package.</p></div></div>
@@ -5788,38 +5880,41 @@
             <label class="field"><span>Report number prefix</span><input name="report_prefix" maxlength="12" placeholder="EA" required></label>
             <label class="field"><span>Tenant code</span><input name="tenant_code" maxlength="60" placeholder="EA-001" required></label>
             <label class="field"><span>Licence reference</span><input name="license_reference" maxlength="80" placeholder="RCE-... (optional)"></label>
-            <label class="field"><span>Licence plan</span><select name="license_plan_code"><option value="starter">Starter</option><option value="professional">Professional</option><option value="enterprise" selected>Enterprise</option></select></label>
+            <label class="field"><span>Licence plan</span><select name="license_plan_code" required>${packagePlans.map(item=>`<option value="${attr(item.id)}" data-code="${attr(item.code)}" data-revision="${attr(item.revision||1)}" ${item.code==="enterprise"?"selected":""}>${esc(item.name)} (r${number(item.revision||1)})</option>`).join("")}</select></label>
             <label class="field"><span>Initial licence status</span><select name="license_status"><option value="pending_activation" selected>Pending activation</option><option value="active">Active</option><option value="perpetual">Perpetual</option></select></label>
+            <div id="schoolPackagePlanSummary" class="template-information full"></div>
             <label class="field"><span>Issue date</span><input name="issued_on" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
             <label class="field"><span>Expiry date and time (optional)</span><input name="expires_at" type="datetime-local"></label>
-            <label class="field full"><span>Authorized deployment domain (optional)</span><input name="authorized_domain" placeholder="reports.school.edu.gh"><small>Stored in the package binding metadata for compliance and redistribution tracing.</small></label>
+            <label class="field full"><span>Authorized deployment domain</span><input name="authorized_domain" placeholder="reports.school.edu.gh" required><small>Stored in the package binding metadata for compliance and redistribution tracing.</small></label>
             <label class="field full"><span>User account email domain (optional)</span><input name="email_domain" placeholder="school.edu.gh"><small>Leave blank to use a safe non-deliverable .invalid placeholder.</small></label>
             <label class="field full"><span>School logo</span><input id="schoolPackageLogo" name="school_logo" type="file" accept="image/png" required><small>PNG only. Maximum 5 MB. Use a square image of at least 256 by 256 pixels.</small></label>
             <div class="package-logo-preview full"><img id="schoolPackageLogoPreview" src="${CONFIG.logoPath}" alt="Package logo preview"><div><strong id="schoolPackageNamePreview">New school package</strong><span>The official package is generated and signed on the server.</span></div></div>
             <label class="field full"><span>GitHub repository name</span><input name="repository_name" maxlength="80" placeholder="example-academy-report-card" required></label>
-            <label class="field full"><span>Supabase Project URL (optional)</span><input name="supabase_url" placeholder="https://your-project.supabase.co"></label>
-            <label class="field full"><span>Supabase Publishable key (optional)</span><input name="supabase_key" placeholder="sb_publishable_..."><small>Secret and service-role keys are rejected by the server.</small></label>
-            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template?"":"disabled"}>Generate protected package</button></div>
+            <label class="field full"><span>Supabase Project URL</span><input name="supabase_url" placeholder="https://your-project.supabase.co" required></label>
+            <label class="field full"><span>Supabase Publishable key</span><input name="supabase_key" placeholder="sb_publishable_..." required><small>Secret and service-role keys are rejected by the server.</small></label>
+            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template&&canGenerate?"":"disabled"}>Generate protected package</button></div>
             <div id="packageGeneratorProgress" class="generator-progress full hidden" aria-live="polite"><span class="spinner small"></span><strong>Generating package</strong><span id="packageGeneratorProgressText">Authorizing platform session</span></div>
           </form>
         </section>
       </div>
       <section class="panel platform-register-panel" style="margin-top:18px">
-        <div class="panel-header"><div><h3>Generated package register</h3><p>Private artifacts and authorized-download history</p></div><span class="status approved">${number(artifacts.length)} records</span></div>
-        <div class="table-wrap platform-register-scroll"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th>Actions</th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td><span class="package-filename">${esc(item.filename)}</span><br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact package-action-row">${item.status==="ready"?`<button class="button secondary small" data-package-download="${attr(item.id)}">Download</button><button class="button warning small" data-package-revoke="${attr(item.id)}">Revoke</button>`:`<button class="button success small" data-package-restore="${attr(item.id)}">Restore</button>`}<button class="button danger small" data-package-delete="${attr(item.id)}">Delete permanently</button></div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
+        <div class="panel-header"><div><h3>Generated package register</h3><p>Private artifacts and authorized-download history</p></div><span class="status approved">${number(consoleData.artifact_count??artifacts.length)} records</span></div>
+        <div class="platform-register-controls"><label class="field"><span>Search packages</span><input id="platformPackageSearch" value="${attr(state.platformPackageSearch)}" placeholder="School, tenant, licence, or filename"></label><div class="button-row"><button class="button secondary small" id="platformPackageSearchApply" type="button">Search</button><button class="button ghost small" id="platformPackageSearchClear" type="button" ${state.platformPackageSearch?"":"disabled"}>Clear</button></div><div class="button-row"><button class="button ghost small" id="platformPackagePrevious" type="button" ${state.platformPackageOffset<=0?"disabled":""}>Previous</button><span class="status neutral">${number(state.platformPackageOffset+1)}-${number(Math.min(state.platformPackageOffset+artifacts.length,consoleData.artifact_count??artifacts.length))}</span><button class="button ghost small" id="platformPackageNext" type="button" ${state.platformPackageOffset+artifacts.length>=(consoleData.artifact_count??artifacts.length)?"disabled":""}>Next</button></div></div>
+        <div class="table-wrap platform-register-scroll"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th>Actions</th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td><span class="package-filename">${esc(item.filename)}</span><br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact package-action-row">${item.status==="ready"?`<button class="button secondary small" data-package-download="${attr(item.id)}">Download</button>${canRevoke?`<button class="button warning small" data-package-revoke="${attr(item.id)}">Revoke</button>`:""}`:item.status==="revoked"&&item.deletion_state==="none"&&canRevoke?`<button class="button success small" data-package-restore="${attr(item.id)}">Restore</button>`:""}${item.status!=="deleted"&&canRevoke?`<button class="button danger small" data-package-delete="${attr(item.id)}">Delete permanently</button>`:item.status==="deleted"?`<span class="status neutral">Receipt retained</span>`:""}</div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
       </section>
       <section class="panel platform-history-panel" style="margin-top:18px">
-        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 100 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${events.length?"":"disabled"}>Clear all history</button></div></div>
+        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 200 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${events.length&&canRevoke?"":"disabled"}>Archive history</button></div></div>
         <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Details</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(String(item.event_type||"").replaceAll("_"," "))}</strong></td><td>${esc(item.event_reason||"—")}</td><td><code class="audit-json">${esc(JSON.stringify(item.event_data||{}))}</code></td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No package events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
-    bindGithubNavigator();
+    bindGithubNavigator(packagePlans,canGenerate,canRevoke);
   }
 
-  function bindGithubNavigator() {
+  function bindGithubNavigator(packagePlans=[],canGenerate=false,canRevoke=false) {
     bindPlatformSectionTabs();
     byId("platformPackageRefresh").onclick=()=>{state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
-    byId("platformTemplateUpload").onclick=uploadPlatformPackageTemplate;
+    if(canGenerate)byId("platformTemplateUpload").onclick=uploadPlatformPackageTemplate;
     const form=byId("schoolPackageForm"),nameInput=form.elements.school_name,shortInput=form.elements.short_name,prefixInput=form.elements.report_prefix,repoInput=form.elements.repository_name,tenantInput=form.elements.tenant_code,logoInput=byId("schoolPackageLogo");
+    if(!canGenerate)[...form.elements].forEach(element=>{element.disabled=true});
     const syncSuggestions=()=>{
       const name=nameInput.value.trim();byId("schoolPackageNamePreview").textContent=name||"New school package";
       if(!shortInput.value.trim()||shortInput.dataset.auto==="true"){shortInput.value=name?`${suggestedPrefix(name)} Reports`:"";shortInput.dataset.auto="true"}
@@ -5830,12 +5925,20 @@
     nameInput.addEventListener("input",syncSuggestions);
     [shortInput,prefixInput,repoInput,tenantInput].forEach(input=>input.addEventListener("input",()=>{input.dataset.auto="false"}));
     logoInput.addEventListener("change",()=>{const file=logoInput.files?.[0];if(!file)return;if(state.packageLogoPreviewUrl)URL.revokeObjectURL(state.packageLogoPreviewUrl);state.packageLogoPreviewUrl=URL.createObjectURL(file);byId("schoolPackageLogoPreview").src=state.packageLogoPreviewUrl});
-    byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
+    const planSelect=form.elements.license_plan_code,statusSelect=form.elements.license_status,expiryInput=form.elements.expires_at;
+    const syncLicenceTerms=()=>{const selected=packagePlans.find(item=>String(item.id)===String(planSelect.value))||{};const perpetualOption=[...statusSelect.options].find(option=>option.value==="perpetual");if(perpetualOption)perpetualOption.disabled=selected.perpetual_allowed!==true;if(statusSelect.value==="perpetual"&&selected.perpetual_allowed!==true)statusSelect.value="pending_activation";const needsExpiry=statusSelect.value!=="perpetual"&&["monthly","annual"].includes(String(selected.billing_cycle||""));expiryInput.disabled=statusSelect.value==="perpetual";expiryInput.required=needsExpiry;if(expiryInput.disabled)expiryInput.value="";else if(needsExpiry&&!expiryInput.value){const days=Number(selected.default_term_days||365);expiryInput.value=dateTimeLocalValue(new Date(Date.now()+days*86400000))}const enabled=Object.entries(selected.feature_flags||{}).filter(([,value])=>value===true).map(([key])=>key.replaceAll("_"," "));const limits=[`Students ${selected.max_students??"Unlimited"}`,`Teachers ${selected.max_teachers??"Unlimited"}`,`System Administrators ${selected.max_system_admins??"Unlimited"}`,`Guardians ${selected.max_guardians??"Unlimited"}`,`Storage ${selected.max_storage_mb==null?"Unlimited":`${number(selected.max_storage_mb)} MB`}`];const summary=byId("schoolPackagePlanSummary");if(summary)summary.innerHTML=`<strong>${esc(selected.name||"Select a plan")} • revision ${number(selected.revision||1)}</strong><span>${esc(limits.join(" • "))}</span><small>${esc(enabled.join(", ")||"No enabled features")} • ${esc(String(selected.billing_cycle||"custom"))} billing • ${number(selected.grace_days||0)} grace days</small>`};
+    planSelect.onchange=()=>{state.packageGenerationKey="";syncLicenceTerms()};statusSelect.onchange=()=>{state.packageGenerationKey="";syncLicenceTerms()};form.addEventListener("input",()=>{state.packageGenerationKey=""});syncLicenceTerms();
+    byId("platformPackageSearchApply").onclick=()=>{state.platformPackageSearch=byId("platformPackageSearch").value.trim();state.platformPackageOffset=0;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
+    byId("platformPackageSearch").onkeydown=event=>{if(event.key==="Enter"){event.preventDefault();byId("platformPackageSearchApply").click()}};
+    byId("platformPackageSearchClear").onclick=()=>{state.platformPackageSearch="";state.platformPackageOffset=0;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
+    byId("platformPackagePrevious").onclick=()=>{state.platformPackageOffset=Math.max(0,state.platformPackageOffset-state.platformPackageLimit);state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
+    byId("platformPackageNext").onclick=()=>{state.platformPackageOffset+=state.platformPackageLimit;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
+    if(canGenerate)byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
     $$('[data-package-download]').forEach(button=>button.onclick=()=>downloadProtectedPackage(button.dataset.packageDownload,button));
     $$('[data-package-revoke]').forEach(button=>button.onclick=()=>revokeProtectedPackage(button.dataset.packageRevoke,button));
     $$('[data-package-restore]').forEach(button=>button.onclick=()=>restoreProtectedPackage(button.dataset.packageRestore,button));
     $$('[data-package-delete]').forEach(button=>button.onclick=()=>deleteProtectedPackage(button.dataset.packageDelete,button));
-    byId("packageAuditClear")?.addEventListener("click",clearPackageSecurityAudit);
+    if(canRevoke)byId("packageAuditClear")?.addEventListener("click",clearPackageSecurityAudit);
   }
 
   function suggestedPrefix(name) {
@@ -5849,7 +5952,7 @@
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.2.9 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.0 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
@@ -5860,10 +5963,14 @@
     const values=formObject(form),logoFile=byId("schoolPackageLogo")?.files?.[0],button=byId("generateSchoolPackage"),progress=byId("packageGeneratorProgress"),progressText=byId("packageGeneratorProgressText");
     state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
     try{
+      const selectedPlan=(state.platformPackageConsole?.plans||[]).find(item=>String(item.id)===String(values.license_plan_code));if(!selectedPlan)throw new Error("Select a current active licence plan.");
+      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name} for ${values.authorized_domain} and Supabase project ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.`,"Generate signed package");if(!confirmed)return;
       progressText.textContent="Reading and validating school logo";const logo_base64=await readFileAsDataUrl(logoFile,PACKAGE_LOGO_MAX_BYTES,PACKAGE_LOGO_TYPES);
       progressText.textContent="Generating and signing package on the server";
-      const data=await invokePlatformPackageManager("generate",{...values,logo_base64,logo_mime:logoFile.type,expires_at:values.expires_at?new Date(values.expires_at).toISOString():""});
+      if(!state.packageGenerationKey)state.packageGenerationKey=crypto.randomUUID();
+      const data=await invokePlatformPackageManager("generate",{...values,license_plan_id:selectedPlan.id,license_plan_revision:selectedPlan.revision,idempotency_key:state.packageGenerationKey,logo_base64,logo_mime:logoFile.type,expires_at:values.expires_at?new Date(values.expires_at).toISOString():""});
       if(!data.signed_url)throw new Error("The package was created but no download authorization was returned.");
+      state.packageGenerationKey="";
       const link=document.createElement("a");link.href=data.signed_url;link.rel="noopener";link.click();
       toast("Protected package generated",`${data.artifact.filename} is ready. The signed download URL expires in ${number(data.expires_in)} seconds.`,"success",9000);state.platformPackageConsole=null;setSync("online","Synced");await renderGithubNavigator(state.viewToken,true);
     }catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"platform_package_manager"})}
@@ -5891,25 +5998,25 @@
     catch(error){toast("Package not restored",friendlyError(error),"error",8000)}finally{button.disabled=false}
   }
   function deleteProtectedPackage(artifactId,button){
-    modal("Delete Generated Package Permanently","This removes the private ZIP file and its generated-package register record. This action cannot be undone.",`<div class="destructive-confirmation"><label class="field"><span>Deletion reason</span><textarea id="packageDeleteReason" minlength="5" required></textarea></label><label class="field"><span>Type DELETE to confirm</span><input id="packageDeleteConfirmText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageDeleteCancel" type="button">Cancel</button><button class="button danger" id="packageDeleteConfirm" type="button">Delete permanently</button>`,"small");
+    modal("Delete Generated Package Permanently","This removes the private ZIP file but retains a deletion receipt and immutable audit record. This action cannot be undone.",`<div class="destructive-confirmation"><label class="field"><span>Deletion reason</span><textarea id="packageDeleteReason" minlength="5" required></textarea></label><label class="field"><span>Type DELETE to confirm</span><input id="packageDeleteConfirmText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageDeleteCancel" type="button">Cancel</button><button class="button danger" id="packageDeleteConfirm" type="button">Delete permanently</button>`,"small");
     byId("packageDeleteCancel").onclick=closeModal;
     byId("packageDeleteConfirm").onclick=async()=>{
       const reason=byId("packageDeleteReason").value.trim(),confirmation=byId("packageDeleteConfirmText").value.trim();
       if(reason.length<5||confirmation!=="DELETE"){toast("Package not deleted","Enter a reason and type DELETE exactly.","error");return}
       const action=byId("packageDeleteConfirm");action.disabled=true;action.textContent="Deleting";
-      try{const result=await invokePlatformPackageManager("delete",{artifact_id:artifactId,reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Generated package deleted permanently",result.storage_removed===false?"The register was removed, but private Storage cleanup needs platform-owner attention.":"The private package and register record were removed.",result.storage_removed===false?"warning":"success",9000);await renderGithubNavigator(state.viewToken,true)}
+      try{const result=await invokePlatformPackageManager("delete",{artifact_id:artifactId,reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Generated package deleted permanently",result.storage_removed===false?"Private Storage cleanup needs platform-owner reconciliation.":"The private package was removed and its deletion receipt retained.",result.storage_removed===false?"warning":"success",9000);await renderGithubNavigator(state.viewToken,true)}
       catch(error){toast("Package not deleted",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Delete permanently"}
     };
   }
   function clearPackageSecurityAudit(){
-    modal("Clear Package Security Audit","This permanently removes every package-security event. Generated packages and the active protected template are not changed.",`<div class="destructive-confirmation"><label class="field"><span>Reason</span><textarea id="packageAuditClearReason" minlength="5" required></textarea></label><label class="field"><span>Type CLEAR to confirm</span><input id="packageAuditClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageAuditClearCancel" type="button">Cancel</button><button class="button danger" id="packageAuditClearConfirm" type="button">Clear permanently</button>`,"small");
+    modal("Archive Package Security Audit","This records an audit checkpoint without deleting package-security events.",`<div class="destructive-confirmation"><label class="field"><span>Archive reason</span><textarea id="packageAuditClearReason" minlength="5" required></textarea></label><label class="field"><span>Type ARCHIVE to confirm</span><input id="packageAuditClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageAuditClearCancel" type="button">Cancel</button><button class="button primary" id="packageAuditClearConfirm" type="button">Record archive</button>`,"small");
     byId("packageAuditClearCancel").onclick=closeModal;
     byId("packageAuditClearConfirm").onclick=async()=>{
       const reason=byId("packageAuditClearReason").value.trim(),confirmation=byId("packageAuditClearText").value.trim();
-      if(reason.length<5||confirmation!=="CLEAR"){toast("Audit not cleared","Enter a reason and type CLEAR exactly.","error");return}
-      const action=byId("packageAuditClearConfirm");action.disabled=true;action.textContent="Clearing";
-      try{await invokePlatformPackageManager("clear_events",{reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Package security history cleared");await renderGithubNavigator(state.viewToken,true)}
-      catch(error){toast("Audit not cleared",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Clear permanently"}
+      if(reason.length<5||confirmation!=="ARCHIVE"){toast("Archive not recorded","Enter a reason and type ARCHIVE exactly.","error");return}
+      const action=byId("packageAuditClearConfirm");action.disabled=true;action.textContent="Archiving";
+      try{await invokePlatformPackageManager("archive_events",{reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Package audit archive recorded");await renderGithubNavigator(state.viewToken,true)}
+      catch(error){toast("Archive not recorded",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Record archive"}
     };
   }
 
