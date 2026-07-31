@@ -1,4 +1,4 @@
-REPORT CARD ENTERPRISE v7.3.1 FINAL LICENSING RUNTIME FIX
+REPORT CARD ENTERPRISE v7.3.2 FINAL FRONTEND RPC COMPATIBILITY FIX
 
 Deploy every file in this directory together. Do not deploy files selectively.
 
