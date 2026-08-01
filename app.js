@@ -576,7 +576,7 @@
     window.addEventListener("beforeunload",event=>{if(state.pending||state.conflicts){event.preventDefault();event.returnValue=""}});
     window.addEventListener("error",event=>reportClientError(event.error||new Error(event.message),{source:"window"}));
     window.addEventListener("unhandledrejection",event=>reportClientError(event.reason,{source:"promise"}));
-    if("serviceWorker" in navigator) {
+    if(!window.RCE_ANDROID_APP&&"serviceWorker" in navigator) {
       navigator.serviceWorker.register("service-worker.js").catch(()=>{});
       navigator.serviceWorker.addEventListener("message",event=>{if(event.data?.type==="FLUSH_OUTBOX")flushOutbox()});
     }
@@ -5640,7 +5640,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.4 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.9 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
@@ -5681,7 +5681,7 @@
   }
 
 
-  // Report Card Enterprise v7.3.4 Final master distribution readiness release
+  // Report Card Enterprise v7.3.9 Final stable Android branding and distribution release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
