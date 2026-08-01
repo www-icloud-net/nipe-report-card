@@ -369,6 +369,7 @@
     if(msg.includes("LICENSE_CAPACITY_REACHED:")) return msg.split("LICENSE_CAPACITY_REACHED:").slice(1).join(":").trim();
     if(msg.includes("LICENSE_FEATURE_NOT_INCLUDED:")) return msg.split("LICENSE_FEATURE_NOT_INCLUDED:").slice(1).join(":").trim()||"This feature is not included in the current licence plan.";
     if(msg.includes("LICENSE_DOWNGRADE_BLOCKED:")) return msg.split("LICENSE_DOWNGRADE_BLOCKED:").slice(1).join(":").trim()||"Current usage exceeds the selected plan capacity.";
+    if(/object exceeded.*maximum allowed size|maximum allowed size|payload too large|entity too large/i.test(msg)) return "The protected package Storage capacity was too small. The updated package manager repairs it automatically; refresh GitHub Navigator and retry the upload.";
     if(msg.toLowerCase().includes("central licence authority")) return "The central licence authority could not confirm this generated package. Check connectivity, deployment binding, and package revocation status.";
     if(msg.toLowerCase().includes("licence package has been revoked")||msg.toLowerCase().includes("licence has been revoked by the platform authority")) return "This generated school package has been revoked by the platform authority.";
     if(msg.toLowerCase().includes("platform super administrator access required")) return "Only a Platform Super Administrator can manage licensing and access controls.";
@@ -5636,7 +5637,7 @@
 
   const PACKAGE_LOGO_TYPES=new Set(["image/png"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
-  const PACKAGE_TEMPLATE_MAX_BYTES=64*1024*1024;
+  const PACKAGE_TEMPLATE_MAX_BYTES=48*1000*1000;
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
@@ -6011,7 +6012,7 @@
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
     if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status",{offset:state.platformPackageOffset,limit:state.platformPackageLimit,search:state.platformPackageSearch});
     if(token!==state.viewToken)return;
-    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true;
+    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true;
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
       ${platformSectionTabs("github")}
@@ -6021,8 +6022,9 @@
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
             ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_9_FINAL.zip before generating a school package.</span></div>`}
+            ${storageCapacity.template?`<div class="template-information"><strong>Private Storage capacity verified</strong><span>Template ${readableBytes(storageCapacity.template.configured_bytes)} • Generated packages ${readableBytes(storageCapacity.generated?.configured_bytes||0)} • private buckets enforced automatically</span></div>`:""}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
-              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 64 MB. Upload uses private signed Storage transfer, then the server verifies every required file, checksum, Android APK, and Windows EXE before activation.</small></label>
+              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 48 MB. Before every upload, the package manager automatically repairs and verifies the private Storage bucket capacity, then validates every required file, checksum, Android APK, and Windows EXE.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
             </form>
           </section>
@@ -6151,8 +6153,19 @@
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
     try{
       if(file.size>PACKAGE_TEMPLATE_MAX_BYTES)throw new Error(`File must not exceed ${readableBytes(PACKAGE_TEMPLATE_MAX_BYTES)}.`);
-      const authorization=await invokePlatformPackageManager("create_template_upload",{filename:file.name,file_size:file.size});
-      const {error:uploadError}=await state.client.storage.from("platform-package-templates").uploadToSignedUrl(authorization.storage_path,authorization.upload_token,file,{contentType:"application/zip"});if(uploadError)throw uploadError;
+      const uploadAttempt=async()=>{
+        const authorization=await invokePlatformPackageManager("create_template_upload",{filename:file.name,file_size:file.size});
+        const serverMax=Number(authorization.max_bytes||PACKAGE_TEMPLATE_MAX_BYTES);if(file.size>serverMax)throw new Error(`File must not exceed ${readableBytes(serverMax)}.`);
+        const {error:uploadError}=await state.client.storage.from("platform-package-templates").uploadToSignedUrl(authorization.storage_path,authorization.upload_token,file,{contentType:"application/zip"});if(uploadError)throw uploadError;
+        return authorization;
+      };
+      let authorization;
+      try{authorization=await uploadAttempt()}
+      catch(uploadError){
+        if(!/object exceeded.*maximum allowed size|maximum allowed size|payload too large|entity too large/i.test(uploadError?.message||String(uploadError)))throw uploadError;
+        await invokePlatformPackageManager("repair_package_storage",{});
+        authorization=await uploadAttempt();
+      }
       await invokePlatformPackageManager("activate_template_upload",{storage_path:authorization.storage_path,filename:file.name});
       state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.9 multi-platform package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")
     }
