@@ -1,6 +1,6 @@
 {
-  "name": "Report Card Enterprise v7.3.9 Final Android Branding and Distribution",
-  "short_name": "Report Card v7.3.9",
+  "name": "Report Card Enterprise v7.3.9 Final Multi-Platform Distribution",
+  "short_name": "RCE v7.3.9",
   "description": "Academic reporting with secure licensing, reliable encrypted school backups, full restoration, package distribution, recovery rehearsal, transcripts, privacy, analytics, attendance, and certificates",
   "start_url": "./",
   "display": "standalone",

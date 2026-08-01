@@ -5361,7 +5361,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.9 Final Android Branding and Distribution Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.9 Final Multi-Platform Branding and Distribution Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5636,14 +5636,14 @@
 
   const PACKAGE_LOGO_TYPES=new Set(["image/png"]);
   const PACKAGE_LOGO_MAX_BYTES=5*1024*1024;
-  const PACKAGE_TEMPLATE_MAX_BYTES=20*1024*1024;
+  const PACKAGE_TEMPLATE_MAX_BYTES=64*1024*1024;
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
       <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.9 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
-      <article><b>4</b><div><strong>Deploy</strong><span>Deploy only GITHUB_PAGES_FRONTEND. The public frontend contains no package-source directory.</span></div></article>
+      <article><b>4</b><div><strong>Deploy and distribute</strong><span>Deploy only GITHUB_PAGES_FRONTEND, then distribute the confirmed Android r6 APK, Windows w1 setup EXE, or privately built school-branded installers.</span></div></article>
     </div>`;
   }
 
@@ -5681,7 +5681,7 @@
   }
 
 
-  // Report Card Enterprise v7.3.9 Final stable Android branding and distribution release
+  // Report Card Enterprise v7.3.9 Final stable multi-platform Android and Windows branding and distribution release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -6022,7 +6022,7 @@
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
             ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_9_FINAL.zip before generating a school package.</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
-              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 20 MB. The server verifies required files and rejects any public GITHUB_PAGES_FRONTEND/package-source directory.</small></label>
+              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 64 MB. Upload uses private signed Storage transfer, then the server verifies every required file, checksum, Android APK, and Windows EXE before activation.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
             </form>
           </section>
@@ -6054,12 +6054,18 @@
             <div class="package-logo-preview full"><img id="schoolPackageLogoPreview" src="${CONFIG.logoPath}" alt="Package logo preview"><div><strong id="schoolPackageNamePreview">New school package</strong><span>The official package is generated and signed on the server.</span></div></div>
             <label class="field full"><span>GitHub repository name</span><input name="repository_name" maxlength="80" placeholder="example-academy-report-card" required></label>
             <label class="field full"><span>Supabase Project URL</span><input name="supabase_url" placeholder="https://your-project.supabase.co" required></label>
-            <label class="field full"><span>Supabase Publishable key</span><input name="supabase_key" placeholder="sb_publishable_..." required><small>Secret and service-role keys are rejected by the server. Branded Android builds require an sb_publishable_ key and do not accept a legacy anon JWT.</small></label>
+            <label class="field full"><span>Supabase Publishable key</span><input name="supabase_key" placeholder="sb_publishable_..." required><small>Secret and service-role keys are rejected by the server. Branded Android and Windows builds require an sb_publishable_ key and do not accept a legacy anon JWT.</small></label>
             <div class="template-information full"><strong>Android distribution</strong><span>The licensed school package can include a ready-to-build branded Android project. The resulting APK uses the school name, school logo, unique application ID, embedded public Supabase connection, and school-specific authentication callback.</span><small>Android signing is deliberately performed outside Supabase in a private GitHub Actions repository or controlled build workstation.</small></div>
             <label class="field full"><span><input id="includeAndroidBuildKit" name="include_android_build_kit" type="checkbox" value="true" checked> Include branded Android APK build kit</span></label>
             <label class="field"><span>Android application name</span><input name="android_app_name" maxlength="80" placeholder="Example Academy Report Card"></label>
             <label class="field"><span>Android application ID</span><input name="android_application_id" maxlength="150" pattern="[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){2,}" placeholder="com.reportcardenterprise.school.exampleacademy"><small>Must remain unchanged for future updates to this school's app.</small></label>
             <label class="field full"><span>Android authentication callback scheme</span><input name="android_callback_scheme" maxlength="64" pattern="[a-z][a-z0-9+.-]{2,63}" placeholder="rceexampleacademy"><small>Add the generated scheme://auth-callback URL to the school's Supabase Auth redirect URLs.</small></label>
+            <div class="template-information full"><strong>Windows distribution</strong><span>Every generated package includes the physically accepted v7.3.9-w1 x64 and ARM64 universal Setup EXEs. It can also include a ready-to-build school-branded Windows installer project with a unique product identity, state folder, runtime port, school logo, and embedded public Supabase connection.</span><small>Use the x64 Setup EXE on standard Intel or AMD computers. Build and Authenticode-sign branded Windows installers only in a private repository or controlled workstation.</small></div>
+            <label class="field full"><span><input id="includeWindowsBuildKit" name="include_windows_build_kit" type="checkbox" value="true" checked> Include branded Windows installer build kit</span></label>
+            <label class="field"><span>Windows application name</span><input name="windows_app_name" maxlength="100" placeholder="Example Academy Report Card"></label>
+            <label class="field"><span>Windows product ID</span><input name="windows_product_id" maxlength="48" pattern="[a-z][a-z0-9-]{2,47}" placeholder="example-academy"><small>Must remain unchanged for future Windows updates.</small></label>
+            <label class="field"><span>Windows publisher</span><input name="windows_publisher" maxlength="100" placeholder="Example Academy"></label>
+            <label class="field"><span>Windows local runtime port</span><input name="windows_runtime_port" type="number" min="18000" max="29999" placeholder="18439"><small>Use a unique port for each branded school product installed on the same computer.</small></label>
             <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template&&canGenerate?"":"disabled"}>Generate protected package</button></div>
             <div id="packageGeneratorProgress" class="generator-progress full hidden" aria-live="polite"><span class="spinner small"></span><strong>Generating package</strong><span id="packageGeneratorProgressText">Authorizing platform session</span></div>
           </form>
@@ -6068,7 +6074,7 @@
       <section class="panel platform-register-panel" style="margin-top:18px">
         <div class="panel-header"><div><h3>Generated package register</h3><p>Private artifacts and authorized-download history</p></div><span class="status approved">${number(consoleData.artifact_count??artifacts.length)} records</span></div>
         <div class="platform-register-controls"><label class="field"><span>Search packages</span><input id="platformPackageSearch" value="${attr(state.platformPackageSearch)}" placeholder="School, tenant, licence, or filename"></label><div class="button-row"><button class="button secondary small" id="platformPackageSearchApply" type="button">Search</button><button class="button ghost small" id="platformPackageSearchClear" type="button" ${state.platformPackageSearch?"":"disabled"}>Clear</button></div><div class="button-row"><button class="button ghost small" id="platformPackagePrevious" type="button" ${state.platformPackageOffset<=0?"disabled":""}>Previous</button><span class="status neutral">${number(state.platformPackageOffset+1)}-${number(Math.min(state.platformPackageOffset+artifacts.length,consoleData.artifact_count??artifacts.length))}</span><button class="button ghost small" id="platformPackageNext" type="button" ${state.platformPackageOffset+artifacts.length>=(consoleData.artifact_count??artifacts.length)?"disabled":""}>Next</button></div></div>
-        <div class="table-wrap platform-register-scroll"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th>Actions</th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td><span class="package-filename">${esc(item.filename)}</span><br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads${item.metadata?.android_distribution?.included?` • Android ${esc(item.metadata.android_distribution.application_id||"profile")}`:""}</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact package-action-row">${item.status==="ready"?`<button class="button secondary small" data-package-download="${attr(item.id)}">Download</button>${canRevoke?`<button class="button warning small" data-package-revoke="${attr(item.id)}">Revoke</button>`:""}`:item.status==="revoked"&&item.deletion_state==="none"&&canRevoke?`<button class="button success small" data-package-restore="${attr(item.id)}">Restore</button>`:""}${item.status!=="deleted"&&canRevoke?`<button class="button danger small" data-package-delete="${attr(item.id)}">Delete permanently</button>`:item.status==="deleted"?`<span class="status neutral">Receipt retained</span>`:""}</div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
+        <div class="table-wrap platform-register-scroll"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th>Actions</th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td><span class="package-filename">${esc(item.filename)}</span><br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads${item.metadata?.android_distribution?.included?` • Android ${esc(item.metadata.android_distribution.application_id||"profile")}`:""}${item.metadata?.windows_distribution?.included?` • Windows ${esc(item.metadata.windows_distribution.product_id||"w1")}`:""}</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact package-action-row">${item.status==="ready"?`<button class="button secondary small" data-package-download="${attr(item.id)}">Download</button>${canRevoke?`<button class="button warning small" data-package-revoke="${attr(item.id)}">Revoke</button>`:""}`:item.status==="revoked"&&item.deletion_state==="none"&&canRevoke?`<button class="button success small" data-package-restore="${attr(item.id)}">Restore</button>`:""}${item.status!=="deleted"&&canRevoke?`<button class="button danger small" data-package-delete="${attr(item.id)}">Delete permanently</button>`:item.status==="deleted"?`<span class="status neutral">Receipt retained</span>`:""}</div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
       </section>
       <section class="panel platform-history-panel" style="margin-top:18px">
         <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 200 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${events.length&&canRevoke?"":"disabled"}>Archive history</button></div></div>
@@ -6081,7 +6087,7 @@
     bindPlatformSectionTabs();
     byId("platformPackageRefresh").onclick=()=>{state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     if(canGenerate)byId("platformTemplateUpload").onclick=uploadPlatformPackageTemplate;
-    const form=byId("schoolPackageForm"),nameInput=form.elements.school_name,shortInput=form.elements.short_name,prefixInput=form.elements.report_prefix,repoInput=form.elements.repository_name,tenantInput=form.elements.tenant_code,logoInput=byId("schoolPackageLogo"),androidToggle=byId("includeAndroidBuildKit"),androidNameInput=form.elements.android_app_name,androidIdInput=form.elements.android_application_id,androidSchemeInput=form.elements.android_callback_scheme;
+    const form=byId("schoolPackageForm"),nameInput=form.elements.school_name,shortInput=form.elements.short_name,prefixInput=form.elements.report_prefix,repoInput=form.elements.repository_name,tenantInput=form.elements.tenant_code,logoInput=byId("schoolPackageLogo"),androidToggle=byId("includeAndroidBuildKit"),androidNameInput=form.elements.android_app_name,androidIdInput=form.elements.android_application_id,androidSchemeInput=form.elements.android_callback_scheme,windowsToggle=byId("includeWindowsBuildKit"),windowsNameInput=form.elements.windows_app_name,windowsProductInput=form.elements.windows_product_id,windowsPublisherInput=form.elements.windows_publisher,windowsPortInput=form.elements.windows_runtime_port;
     if(!canGenerate)[...form.elements].forEach(element=>{element.disabled=true});
     const syncSuggestions=()=>{
       const name=nameInput.value.trim();byId("schoolPackageNamePreview").textContent=name||"New school package";
@@ -6093,11 +6099,17 @@
       if(!androidNameInput.value.trim()||androidNameInput.dataset.auto==="true"){androidNameInput.value=name?`${name} Report Card`:"";androidNameInput.dataset.auto="true"}
       if(!androidIdInput.value.trim()||androidIdInput.dataset.auto==="true"){androidIdInput.value=androidSegment?`com.reportcardenterprise.school.${androidSegment}`:"";androidIdInput.dataset.auto="true"}
       if(!androidSchemeInput.value.trim()||androidSchemeInput.dataset.auto==="true"){androidSchemeInput.value=androidSegment?`rce${androidSegment}`:"";androidSchemeInput.dataset.auto="true"}
+      const windowsProduct=suggestedWindowsProductId(tenantInput.value||name);
+      if(!windowsNameInput.value.trim()||windowsNameInput.dataset.auto==="true"){windowsNameInput.value=name?`${name} Report Card`:"";windowsNameInput.dataset.auto="true"}
+      if(!windowsProductInput.value.trim()||windowsProductInput.dataset.auto==="true"){windowsProductInput.value=windowsProduct;windowsProductInput.dataset.auto="true"}
+      if(!windowsPublisherInput.value.trim()||windowsPublisherInput.dataset.auto==="true"){windowsPublisherInput.value=name||"";windowsPublisherInput.dataset.auto="true"}
+      if(!windowsPortInput.value||windowsPortInput.dataset.auto==="true"){windowsPortInput.value=suggestedWindowsPort(tenantInput.value||name);windowsPortInput.dataset.auto="true"}
     };
     nameInput.addEventListener("input",syncSuggestions);
-    [shortInput,prefixInput,repoInput,androidNameInput,androidIdInput,androidSchemeInput].forEach(input=>input.addEventListener("input",()=>{input.dataset.auto="false"}));tenantInput.addEventListener("input",()=>{tenantInput.dataset.auto="false";syncSuggestions()});
+    [shortInput,prefixInput,repoInput,androidNameInput,androidIdInput,androidSchemeInput,windowsNameInput,windowsProductInput,windowsPublisherInput,windowsPortInput].forEach(input=>input.addEventListener("input",()=>{input.dataset.auto="false"}));tenantInput.addEventListener("input",()=>{tenantInput.dataset.auto="false";syncSuggestions()});
     logoInput.addEventListener("change",()=>{const file=logoInput.files?.[0];if(!file)return;if(state.packageLogoPreviewUrl)URL.revokeObjectURL(state.packageLogoPreviewUrl);state.packageLogoPreviewUrl=URL.createObjectURL(file);byId("schoolPackageLogoPreview").src=state.packageLogoPreviewUrl});
-    const syncAndroidFields=()=>{const enabled=canGenerate&&androidToggle.checked;[androidNameInput,androidIdInput,androidSchemeInput].forEach(input=>{input.disabled=!enabled;input.required=enabled});state.packageGenerationKey=""};androidToggle.onchange=syncAndroidFields;syncAndroidFields();syncSuggestions();
+    const syncAndroidFields=()=>{const enabled=canGenerate&&androidToggle.checked;[androidNameInput,androidIdInput,androidSchemeInput].forEach(input=>{input.disabled=!enabled;input.required=enabled});state.packageGenerationKey=""};androidToggle.onchange=syncAndroidFields;
+    const syncWindowsFields=()=>{const enabled=canGenerate&&windowsToggle.checked;[windowsNameInput,windowsProductInput,windowsPublisherInput,windowsPortInput].forEach(input=>{input.disabled=!enabled;input.required=enabled});state.packageGenerationKey=""};windowsToggle.onchange=syncWindowsFields;syncAndroidFields();syncWindowsFields();syncSuggestions();
     const planSelect=form.elements.license_plan_code,statusSelect=form.elements.license_status,expiryInput=form.elements.expires_at;
     const syncLicenceTerms=()=>{const selected=packagePlans.find(item=>String(item.id)===String(planSelect.value))||{};const perpetualOption=[...statusSelect.options].find(option=>option.value==="perpetual");if(perpetualOption)perpetualOption.disabled=selected.perpetual_allowed!==true;if(statusSelect.value==="perpetual"&&selected.perpetual_allowed!==true)statusSelect.value="pending_activation";const needsExpiry=statusSelect.value!=="perpetual"&&["monthly","annual"].includes(String(selected.billing_cycle||""));expiryInput.disabled=statusSelect.value==="perpetual";expiryInput.required=needsExpiry;if(expiryInput.disabled)expiryInput.value="";else if(needsExpiry&&!expiryInput.value){const days=Number(selected.default_term_days||365);expiryInput.value=dateTimeLocalValue(new Date(Date.now()+days*86400000))}const enabled=Object.entries(selected.feature_flags||{}).filter(([,value])=>value===true).map(([key])=>key.replaceAll("_"," "));const limits=[`Students ${selected.max_students??"Unlimited"}`,`Teachers ${selected.max_teachers??"Unlimited"}`,`System Administrators ${selected.max_system_admins??"Unlimited"}`,`Guardians ${selected.max_guardians??"Unlimited"}`,`Storage ${selected.max_storage_mb==null?"Unlimited":`${number(selected.max_storage_mb)} MB`}`];const summary=byId("schoolPackagePlanSummary");if(summary)summary.innerHTML=`<strong>${esc(selected.name||"Select a plan")} • revision ${number(selected.revision||1)}</strong><span>${esc(limits.join(" • "))}</span><small>${esc(enabled.join(", ")||"No enabled features")} • ${esc(String(selected.billing_cycle||"custom"))} billing • ${number(selected.grace_days||0)} grace days</small>`};
     planSelect.onchange=()=>{state.packageGenerationKey="";syncLicenceTerms()};statusSelect.onchange=()=>{state.packageGenerationKey="";syncLicenceTerms()};form.addEventListener("input",()=>{state.packageGenerationKey=""});syncLicenceTerms();
@@ -6123,13 +6135,27 @@
     const compact=slugify(value||"school").replaceAll("-","").replaceAll("_","").slice(0,48)||"school";
     return /^[a-z]/.test(compact)?compact:`s${compact}`;
   }
+  function suggestedWindowsProductId(value) {
+    const result=slugify(value||"school").slice(0,48)||"school";
+    return /^[a-z]/.test(result)?result:`school-${result}`.slice(0,48);
+  }
+  function suggestedWindowsPort(value) {
+    let hash=2166136261;for(const char of String(value||"school")){hash^=char.charCodeAt(0);hash=Math.imul(hash,16777619)}
+    return 18000+((hash>>>0)%12000);
+  }
 
   async function uploadPlatformPackageTemplate() {
     const file=byId("platformPackageTemplate")?.files?.[0],button=byId("platformTemplateUpload");
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
     button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
-    try{const template_base64=await readFileAsDataUrl(file,PACKAGE_TEMPLATE_MAX_BYTES);await invokePlatformPackageManager("upload_template",{template_base64,filename:file.name});state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.9 package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")}
+    try{
+      if(file.size>PACKAGE_TEMPLATE_MAX_BYTES)throw new Error(`File must not exceed ${readableBytes(PACKAGE_TEMPLATE_MAX_BYTES)}.`);
+      const authorization=await invokePlatformPackageManager("create_template_upload",{filename:file.name,file_size:file.size});
+      const {error:uploadError}=await state.client.storage.from("platform-package-templates").uploadToSignedUrl(authorization.storage_path,authorization.upload_token,file,{contentType:"application/zip"});if(uploadError)throw uploadError;
+      await invokePlatformPackageManager("activate_template_upload",{storage_path:authorization.storage_path,filename:file.name});
+      state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.9 multi-platform package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")
+    }
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
   }
@@ -6143,11 +6169,13 @@
       const selectedPlan=(state.platformPackageConsole?.plans||[]).find(item=>String(item.id)===String(values.license_plan_code));if(!selectedPlan)throw new Error("Select a current active licence plan.");
       const includeAndroid=byId("includeAndroidBuildKit")?.checked===true;
       const androidSummary=includeAndroid?` A branded Android build kit will be included for ${values.android_application_id}.`:"";
-      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name} for ${values.authorized_domain} and Supabase project ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.${androidSummary}`,"Generate signed package");if(!confirmed)return;
+      const includeWindows=byId("includeWindowsBuildKit")?.checked===true;
+      const windowsSummary=includeWindows?` A branded Windows installer build kit will be included for product ${values.windows_product_id} on local port ${values.windows_runtime_port}.`:" The confirmed universal Windows w1 installers will still be included.";
+      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name} for ${values.authorized_domain} and Supabase project ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.${androidSummary}${windowsSummary}`,"Generate signed package");if(!confirmed)return;
       progressText.textContent="Reading and validating school logo";const logo_base64=await readFileAsDataUrl(logoFile,PACKAGE_LOGO_MAX_BYTES,PACKAGE_LOGO_TYPES);
       progressText.textContent="Generating and signing package on the server";
       if(!state.packageGenerationKey)state.packageGenerationKey=crypto.randomUUID();
-      const data=await invokePlatformPackageManager("generate",{...values,include_android_build_kit:includeAndroid,license_plan_id:selectedPlan.id,license_plan_revision:selectedPlan.revision,idempotency_key:state.packageGenerationKey,logo_base64,logo_mime:logoFile.type,expires_at:values.expires_at?new Date(values.expires_at).toISOString():""});
+      const data=await invokePlatformPackageManager("generate",{...values,include_android_build_kit:includeAndroid,include_windows_build_kit:includeWindows,license_plan_id:selectedPlan.id,license_plan_revision:selectedPlan.revision,idempotency_key:state.packageGenerationKey,logo_base64,logo_mime:logoFile.type,expires_at:values.expires_at?new Date(values.expires_at).toISOString():""});
       if(!data.signed_url)throw new Error("The package was created but no download authorization was returned.");
       state.packageGenerationKey="";
       const link=document.createElement("a");link.href=data.signed_url;link.rel="noopener";link.click();
