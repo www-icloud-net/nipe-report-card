@@ -394,7 +394,9 @@
     if(msg.toLowerCase().includes("multi-factor authentication required")) return "Multi-factor authentication is required for this protected operation. Sign out, sign in again, and complete the authenticator-code step, or enable an authenticator in Settings.";
     if(msg.includes("RCE_BACKUP_ENCRYPTION_KEY is required")||msg.includes("NIS_BACKUP_ENCRYPTION_KEY")) return "The backup encryption secret is missing from the scheduled-backup Edge Function. Configure RCE_BACKUP_ENCRYPTION_KEY and redeploy the function.";
     if(msg.includes("Package signing bootstrap SQL is not installed")) return "Install the package-signing Vault bootstrap SQL once, redeploy platform-package-manager, then refresh GitHub Navigator. The signing key will be generated and encrypted automatically.";
+    if(/stored package signing public key does not match|package signing metadata repair/i.test(msg)) return "The stored signing metadata is inconsistent. Deploy the current signing-repair SQL and package manager, then refresh GitHub Navigator so the existing private key can be repaired automatically.";
     if(/package signing vault|stored package signing key|package signing key fingerprint/i.test(msg)) return "The protected package-signing key could not be read or verified. Apply the current signing recovery patch and review the platform-package-manager logs before generating packages.";
+    if(/not having enough compute resources|compute resources/i.test(msg)) return "The old template validator exceeded the Edge Function compute limit. Deploy the current compute-safe package manager and frontend, then upload the template again.";
     if(msg.toLowerCase().includes("service configuration unavailable")) return "The scheduled-backup Edge Function is missing its Supabase service configuration. Redeploy it and confirm SUPABASE_URL and the service-role secret are available.";
     if(msg.toLowerCase().includes("bucket not found")) return "A required private Storage bucket is unavailable. Apply the current setup, confirm the system-backups bucket exists, and redeploy scheduled-backup.";
     if(msg.toLowerCase().includes("failed to fetch")||msg.toLowerCase().includes("network")) return "The server could not be reached.";
@@ -4950,7 +4952,7 @@
     if(force||!state.licenseConsole)state.licenseConsole=await rpc("get_platform_license_console");
     if(token!==state.viewToken)return;
     const data=state.licenseConsole||{},snapshot=data.snapshot||{},license=data.license||{},plan=snapshot.plan||{};
-    const plans=data.plans||[],usage=data.usage||{},locks=data.active_locks||[],events=data.recent_events||[],admins=data.platform_admins||[],authorities=data.distribution_authorities||[],canManageDistributors=data.distribution_authority?.active===true&&data.distribution_authority?.can_revoke===true;
+    const plans=data.plans||[],usage=data.usage||{},locks=data.active_locks||[],events=data.recent_events||[],verificationHistory=data.verification_history||[],licensingArchives=data.archives||[],admins=data.platform_admins||[],authorities=data.distribution_authorities||[],canManageDistributors=data.distribution_authority?.active===true&&data.distribution_authority?.can_revoke===true;
     const status=snapshot.computed_status||license.status||"unknown";
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>Platform Licensing Control</h3><p>Manage the installation licence, compliance state, capacity, and access restrictions.</p></div><button class="button ghost" id="licenseRefresh">Refresh</button></div>
@@ -5017,7 +5019,7 @@
         <div class="button-row" style="padding:16px"><button class="button secondary" id="licensePlanCreate" type="button">Create plan</button><button class="button outline" id="licenseOverrideEdit" type="button">School entitlement override</button></div>
       </section>
       <section class="panel platform-history-panel">
-        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 200 platform events</p></div><div class="button-row"><button class="button danger small" id="licenseHistoryClear" type="button" ${events.length?"":"disabled"}>Archive history</button></div></div>
+        <div class="panel-header"><div><h3>Licence and compliance history</h3><p>Latest 200 platform events</p></div><div class="button-row"><button class="button danger small" id="licenseHistoryClear" type="button" ${(events.length||verificationHistory.length||licensingArchives.length)?"":"disabled"}>Clear all history</button></div></div>
         <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Actor</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(platformEventSummary(item))}</strong></td><td>${esc(item.event_reason||"—")}</td><td>${esc(item.actor_name||item.actor_id||"System")}</td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No licensing events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
     bindPlatformSectionTabs();
@@ -5081,14 +5083,14 @@
     catch(error){toast("Lock not released",friendlyError(error),"error",7500)}
   }
   function clearPlatformLicenseHistory(){
-    modal("Archive Licence and Compliance History","This creates a permanent audit checkpoint without deleting any event or verification record.",`<div class="destructive-confirmation"><label class="field"><span>Archive reason</span><textarea id="licenseHistoryClearReason" minlength="5" required placeholder="Why is this archive checkpoint being recorded?"></textarea></label><label class="field"><span>Type ARCHIVE to confirm</span><input id="licenseHistoryClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="licenseHistoryClearCancel" type="button">Cancel</button><button class="button primary" id="licenseHistoryClearConfirm" type="button">Record archive</button>`,"small");
+    modal("Clear Licence and Compliance History","This permanently removes the visible licence events, verification logs, and previous licensing archive checkpoints. Current licences, plans, users, and access settings are not changed.",`<div class="destructive-confirmation"><label class="field"><span>Reset reason</span><textarea id="licenseHistoryClearReason" minlength="5" required placeholder="Why are these history records being cleared?"></textarea></label><label class="field"><span>Type CLEAR ALL to confirm</span><input id="licenseHistoryClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="licenseHistoryClearCancel" type="button">Cancel</button><button class="button danger" id="licenseHistoryClearConfirm" type="button">Clear all history</button>`,"small");
     byId("licenseHistoryClearCancel").onclick=closeModal;
     byId("licenseHistoryClearConfirm").onclick=async()=>{
       const reason=byId("licenseHistoryClearReason").value.trim(),confirmation=byId("licenseHistoryClearText").value.trim();
-      if(reason.length<5||confirmation!=="ARCHIVE"){toast("Archive not recorded","Enter a reason and type ARCHIVE exactly.","error");return}
-      const button=byId("licenseHistoryClearConfirm");button.disabled=true;button.textContent="Archiving";
-      try{state.licenseConsole=await rpc("platform_clear_license_history",{reason_text:reason,confirmation_text:confirmation});closeModal();toast("Audit archive recorded");await renderLicensing(state.viewToken)}
-      catch(error){toast("Archive not recorded",friendlyError(error),"error",8000)}finally{button.disabled=false;button.textContent="Record archive"}
+      if(reason.length<5||confirmation!=="CLEAR ALL"){toast("History not cleared","Enter a reason and type CLEAR ALL exactly.","error");return}
+      const button=byId("licenseHistoryClearConfirm");button.disabled=true;button.textContent="Clearing";
+      try{state.licenseConsole=await rpc("platform_clear_license_history",{reason_text:reason,confirmation_text:confirmation});closeModal();toast("Licence and compliance history cleared");await renderLicensing(state.viewToken)}
+      catch(error){toast("History not cleared",friendlyError(error),"error",8000)}finally{button.disabled=false;button.textContent="Clear all history"}
     };
   }
 
@@ -6058,16 +6060,15 @@
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
       ${platformSectionTabs("github")}
-      <section class="license-banner warning"><div><strong>Protected platform operation</strong><span>School System Administrators cannot view this section, call the package service, access private package buckets, or download reusable source packages. Your distributor permissions: generation ${canGenerate?"enabled":"disabled"}; revocation and audit administration ${canRevoke?"enabled":"disabled"}.</span></div></section>
       <div class="platform-package-workspace">
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
             ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_9_FINAL.zip before generating a school package.</span></div>`}
             ${storageCapacity.template?`<div class="template-information"><strong>Private Storage capacity verified</strong><span>Template ${readableBytes(storageCapacity.template.configured_bytes)} • Generated packages ${readableBytes(storageCapacity.generated?.configured_bytes||0)} • private buckets enforced automatically</span></div>`:""}
-            ${signingReady?`<div class="template-information"><strong>Package signing ready</strong><span>Key ${esc(signingStatus.key_id||"verified")} • ${signingStatus.source==="vault"?"encrypted Supabase Vault persistence":"Edge Function environment secret"}${signingStatus.provisioned?" • created automatically on this refresh":""}</span></div>`:`<div class="template-information warning"><strong>Package signing setup required</strong><span>${esc(signingStatus.error||"Refresh after deploying the package-signing Vault bootstrap fix.")}</span></div>`}
+            ${signingReady?`<div class="template-information"><strong>Package signing ready</strong><span>Key ${esc(signingStatus.key_id||"verified")} • ${signingStatus.source==="vault"?"encrypted Supabase Vault persistence":"Edge Function environment secret"}${signingStatus.provisioned?" • created automatically on this refresh":""}${signingStatus.repaired?" • metadata repaired automatically":""}${signingStatus.warning?` • ${esc(signingStatus.warning)}`:""}</span></div>`:`<div class="template-information warning"><strong>Package signing setup required</strong><span>${esc(signingStatus.error||"Refresh after deploying the package-signing Vault bootstrap fix.")}</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
-              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 48 MB. Before every upload, the package manager automatically repairs and verifies the private Storage bucket capacity, then validates every required file, checksum, Android APK, and Windows EXE.</small></label>
+              <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 48 MB. The browser performs the complete checksum scan, then the server verifies the archive digest, structure, release metadata, critical files, Android APK, and Windows EXEs without exhausting Edge Function compute resources.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
             </form>
           </section>
@@ -6123,7 +6124,7 @@
         <div class="table-wrap platform-register-scroll"><table><thead><tr><th>Generated</th><th>School and tenant</th><th>Licence</th><th>Package</th><th>Status</th><th>Actions</th></tr></thead><tbody>${artifacts.length?artifacts.map(item=>`<tr><td>${esc(isoDateTime(item.generated_at))}</td><td><strong>${esc(item.school_name)}</strong><br><small>${esc(item.tenant_code)}${item.authorized_domain?` • ${esc(item.authorized_domain)}`:""}</small></td><td>${esc(item.license_reference)}<br><small>${esc(item.license_plan_code)}</small></td><td><span class="package-filename">${esc(item.filename)}</span><br><small>${readableBytes(item.file_size)} • ${number(item.download_count)} downloads${item.metadata?.android_distribution?.included?` • Android ${esc(item.metadata.android_distribution.application_id||"profile")}`:""}${item.metadata?.windows_distribution?.included?` • Windows ${esc(item.metadata.windows_distribution.product_id||"w1")}`:""}</small></td><td>${platformPackageStatusLabel(item.status)}${item.revocation_reason?`<br><small>${esc(item.revocation_reason)}</small>`:""}</td><td><div class="button-row compact package-action-row">${item.status==="ready"?`<button class="button secondary small" data-package-download="${attr(item.id)}">Download</button>${canRevoke?`<button class="button warning small" data-package-revoke="${attr(item.id)}">Revoke</button>`:""}`:item.status==="revoked"&&item.deletion_state==="none"&&canRevoke?`<button class="button success small" data-package-restore="${attr(item.id)}">Restore</button>`:""}${item.status!=="deleted"&&canRevoke?`<button class="button danger small" data-package-delete="${attr(item.id)}">Delete permanently</button>`:item.status==="deleted"?`<span class="status neutral">Receipt retained</span>`:""}</div></td></tr>`).join(""):`<tr><td colspan="6"><div class="empty">No protected package has been generated</div></td></tr>`}</tbody></table></div>
       </section>
       <section class="panel platform-history-panel" style="margin-top:18px">
-        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 200 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${events.length&&canRevoke?"":"disabled"}>Archive history</button></div></div>
+        <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 200 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${(events.length||archives.length)&&canRevoke?"":"disabled"}>Clear all history</button></div></div>
         <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Details</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(String(item.event_type||"").replaceAll("_"," "))}</strong></td><td>${esc(item.event_reason||"—")}</td><td><code class="audit-json">${esc(JSON.stringify(item.event_data||{}))}</code></td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No package events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
     bindGithubNavigator(packagePlans,canGenerate,canRevoke,signingReady);
@@ -6190,13 +6191,49 @@
     return 18000+((hash>>>0)%12000);
   }
 
+  async function sha256BytesHex(bytes){const hash=await crypto.subtle.digest("SHA-256",bytes);return [...new Uint8Array(hash)].map(byte=>byte.toString(16).padStart(2,"0")).join("")}
+  function safeProtectedTemplatePath(path){return Boolean(path)&&!path.includes("\0")&&!path.includes("\\")&&!path.startsWith("/")&&!/^[A-Za-z]:/.test(path)&&!path.split("/").some(part=>part===".."||part===".")}
+  async function validateProtectedTemplateInBrowser(file,onProgress=()=>{}){
+    if(!window.JSZip)throw new Error("The protected-template ZIP validator is unavailable. Reload the application.");
+    onProgress("Reading protected template");
+    const buffer=await file.arrayBuffer();
+    const archive_sha256=await sha256BytesHex(buffer);
+    onProgress("Opening ZIP and checking CRC integrity");
+    const zip=await window.JSZip.loadAsync(buffer,{checkCRC32:true});
+    const names=Object.keys(zip.files),files=names.filter(name=>!zip.files[name].dir);
+    if(files.length<1||files.length>900)throw new Error(`Template contains an invalid number of files (${files.length}).`);
+    const roots=[...new Set(files.filter(name=>name.endsWith("GITHUB_PAGES_FRONTEND/app.js")).map(name=>name.slice(0,-"GITHUB_PAGES_FRONTEND/app.js".length)))];
+    if(roots.length!==1||!roots[0]||!roots[0].endsWith("/"))throw new Error("The ZIP must contain exactly one Report Card Enterprise package root.");
+    const root=roots[0],canonical=new Set();
+    for(const name of names){if(!safeProtectedTemplatePath(name)||!name.startsWith(root))throw new Error(`Unsafe or out-of-root ZIP path: ${name}`);const key=name.toLowerCase();if(canonical.has(key))throw new Error(`Duplicate case-insensitive ZIP path: ${name}`);canonical.add(key)}
+    const checksumEntry=zip.file(`${root}PACKAGE_CHECKSUMS.sha256`),shaSumsEntry=zip.file(`${root}SHA256SUMS.txt`);if(!checksumEntry||!shaSumsEntry)throw new Error("The protected-template checksum files are missing.");
+    const checksumBytes=await checksumEntry.async("uint8array"),shaSumsBytes=await shaSumsEntry.async("uint8array"),checksumText=new TextDecoder().decode(checksumBytes),shaSumsText=new TextDecoder().decode(shaSumsBytes),checksums=new Map();
+    if(shaSumsText!==checksumText)throw new Error("PACKAGE_CHECKSUMS.sha256 and SHA256SUMS.txt do not match.");
+    for(const line of checksumText.split(/\\r?\\n/)){const match=line.match(/^([a-f0-9]{64})\\s{2}(.+)$/i);if(match)checksums.set(match[2],match[1].toLowerCase())}
+    const relativeFiles=files.filter(name=>name!==`${root}PACKAGE_CHECKSUMS.sha256`&&name!==`${root}SHA256SUMS.txt`).map(name=>name.slice(root.length));
+    if(checksums.size!==relativeFiles.length)throw new Error("The checksum manifest does not match the template file set.");
+    let totalUncompressed=checksumBytes.byteLength+shaSumsBytes.byteLength,checked=0;
+    if(checksumBytes.byteLength>20*1024*1024||shaSumsBytes.byteLength>20*1024*1024)throw new Error("A checksum file exceeds the per-file safety limit.");
+    for(const relative of relativeFiles){
+      const entry=zip.file(`${root}${relative}`),expected=checksums.get(relative);if(!entry||!expected)throw new Error(`Checksum entry is missing for ${relative}`);
+      const bytes=await entry.async("uint8array");totalUncompressed+=bytes.byteLength;if(bytes.byteLength>20*1024*1024)throw new Error(`Template file exceeds the per-file safety limit: ${relative}`);if(totalUncompressed>250*1024*1024)throw new Error("Template uncompressed size exceeds the safety limit.");
+      if(await sha256BytesHex(bytes)!==expected)throw new Error(`Template checksum mismatch: ${relative}`);
+      checked+=1;if(checked===1||checked%20===0||checked===relativeFiles.length){onProgress(`Validating template checksums (${checked}/${relativeFiles.length})`);await new Promise(resolve=>setTimeout(resolve,0))}
+    }
+    let manifest;try{manifest=JSON.parse(await zip.file(`${root}PROJECT_MANIFEST.json`).async("string"))}catch{throw new Error("PROJECT_MANIFEST.json is invalid JSON.")}
+    if(String(manifest.version||"")!=="7.3.9")throw new Error("The protected template version must be 7.3.9.");
+    return {archive_sha256,checksum_manifest_sha256:await sha256BytesHex(checksumBytes),file_count:files.length,total_uncompressed_bytes:totalUncompressed,package_root:root};
+  }
+
   async function uploadPlatformPackageTemplate() {
     const file=byId("platformPackageTemplate")?.files?.[0],button=byId("platformTemplateUpload");
     if(!file){toast("Template not installed","Select the official package template ZIP.","error");return}
     if(!await confirmAction("Install protected package template","The selected ZIP will replace the active server-side template after validation.","Install template"))return;
-    button.disabled=true;button.textContent="Uploading";setSync("pending","Uploading template");
+    button.disabled=true;button.textContent="Validating";setSync("pending","Validating template");
     try{
       if(file.size>PACKAGE_TEMPLATE_MAX_BYTES)throw new Error(`File must not exceed ${readableBytes(PACKAGE_TEMPLATE_MAX_BYTES)}.`);
+      const receipt=await validateProtectedTemplateInBrowser(file,message=>{button.textContent="Validating";setSync("pending",message)});
+      button.textContent="Uploading";setSync("pending","Uploading validated template");
       const uploadAttempt=async()=>{
         const authorization=await invokePlatformPackageManager("create_template_upload",{filename:file.name,file_size:file.size});
         const serverMax=Number(authorization.max_bytes||PACKAGE_TEMPLATE_MAX_BYTES);if(file.size>serverMax)throw new Error(`File must not exceed ${readableBytes(serverMax)}.`);
@@ -6210,8 +6247,9 @@
         await invokePlatformPackageManager("repair_package_storage",{});
         authorization=await uploadAttempt();
       }
-      await invokePlatformPackageManager("activate_template_upload",{storage_path:authorization.storage_path,filename:file.name});
-      state.platformPackageConsole=null;toast("Protected template installed","The server verified and activated the official v7.3.9 multi-platform package template.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")
+      button.textContent="Activating";setSync("pending","Activating validated template");
+      await invokePlatformPackageManager("activate_template_upload",{storage_path:authorization.storage_path,filename:file.name,client_validation_receipt:receipt});
+      state.platformPackageConsole=null;toast("Protected template installed","The complete browser checksum scan and compute-safe server validation passed.");await renderGithubNavigator(state.viewToken,true);setSync("online","Synced")
     }
     catch(error){toast("Template not installed",friendlyError(error),"error",9000);setSync("pending","Retry required")}
     finally{button.disabled=false;button.textContent="Install or replace template"}
@@ -6281,14 +6319,14 @@
     };
   }
   function clearPackageSecurityAudit(){
-    modal("Archive Package Security Audit","This records an audit checkpoint without deleting package-security events.",`<div class="destructive-confirmation"><label class="field"><span>Archive reason</span><textarea id="packageAuditClearReason" minlength="5" required></textarea></label><label class="field"><span>Type ARCHIVE to confirm</span><input id="packageAuditClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageAuditClearCancel" type="button">Cancel</button><button class="button primary" id="packageAuditClearConfirm" type="button">Record archive</button>`,"small");
+    modal("Clear Package Security Audit","This permanently removes the visible package-security events and previous package archive checkpoints. Generated package records and private package files are not deleted.",`<div class="destructive-confirmation"><label class="field"><span>Reset reason</span><textarea id="packageAuditClearReason" minlength="5" required></textarea></label><label class="field"><span>Type CLEAR ALL to confirm</span><input id="packageAuditClearText" autocomplete="off" required></label></div>`,`<button class="button ghost" id="packageAuditClearCancel" type="button">Cancel</button><button class="button danger" id="packageAuditClearConfirm" type="button">Clear all history</button>`,"small");
     byId("packageAuditClearCancel").onclick=closeModal;
     byId("packageAuditClearConfirm").onclick=async()=>{
       const reason=byId("packageAuditClearReason").value.trim(),confirmation=byId("packageAuditClearText").value.trim();
-      if(reason.length<5||confirmation!=="ARCHIVE"){toast("Archive not recorded","Enter a reason and type ARCHIVE exactly.","error");return}
-      const action=byId("packageAuditClearConfirm");action.disabled=true;action.textContent="Archiving";
-      try{await invokePlatformPackageManager("archive_events",{reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Package audit archive recorded");await renderGithubNavigator(state.viewToken,true)}
-      catch(error){toast("Archive not recorded",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Record archive"}
+      if(reason.length<5||confirmation!=="CLEAR ALL"){toast("History not cleared","Enter a reason and type CLEAR ALL exactly.","error");return}
+      const action=byId("packageAuditClearConfirm");action.disabled=true;action.textContent="Clearing";
+      try{await invokePlatformPackageManager("clear_events",{reason,confirmation});state.platformPackageConsole=null;closeModal();toast("Package security audit cleared");await renderGithubNavigator(state.viewToken,true)}
+      catch(error){toast("History not cleared",friendlyError(error),"error",8500)}finally{action.disabled=false;action.textContent="Clear all history"}
     };
   }
 
