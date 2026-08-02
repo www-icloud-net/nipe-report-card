@@ -393,6 +393,8 @@
     if(error?.code==="23505"&&msg.toLowerCase().includes("student_reports")) return "A current report already exists for this student and term.";
     if(msg.toLowerCase().includes("multi-factor authentication required")) return "Multi-factor authentication is required for this protected operation. Sign out, sign in again, and complete the authenticator-code step, or enable an authenticator in Settings.";
     if(msg.includes("RCE_BACKUP_ENCRYPTION_KEY is required")||msg.includes("NIS_BACKUP_ENCRYPTION_KEY")) return "The backup encryption secret is missing from the scheduled-backup Edge Function. Configure RCE_BACKUP_ENCRYPTION_KEY and redeploy the function.";
+    if(msg.includes("Package signing bootstrap SQL is not installed")) return "Install the package-signing Vault bootstrap SQL once, redeploy platform-package-manager, then refresh GitHub Navigator. The signing key will be generated and encrypted automatically.";
+    if(/package signing vault|stored package signing key|package signing key fingerprint/i.test(msg)) return "The protected package-signing key could not be read or verified. Apply the current signing recovery patch and review the platform-package-manager logs before generating packages.";
     if(msg.toLowerCase().includes("service configuration unavailable")) return "The scheduled-backup Edge Function is missing its Supabase service configuration. Redeploy it and confirm SUPABASE_URL and the service-role secret are available.";
     if(msg.toLowerCase().includes("bucket not found")) return "A required private Storage bucket is unavailable. Apply the current setup, confirm the system-backups bucket exists, and redeploy scheduled-backup.";
     if(msg.toLowerCase().includes("failed to fetch")||msg.toLowerCase().includes("network")) return "The server could not be reached.";
@@ -5667,7 +5669,7 @@
   async function invokePlatformPackageManager(action,payload={}) {
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
     const {data,error}=await state.client.functions.invoke("platform-package-manager",{body:{action,...payload}});
-    if(error){let detail=null;try{detail=await error.context?.json?.()}catch(_){}throw new Error(detail?.error||data?.error||error.message||"Platform package service unavailable")}
+    if(error)throw new Error(await edgeFunctionErrorMessage(error,data));
     if(!data?.ok)throw new Error(data?.error||"Platform package operation failed");
     return data;
   }
@@ -6028,7 +6030,7 @@
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
     if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status",{offset:state.platformPackageOffset,limit:state.platformPackageLimit,search:state.platformPackageSearch});
     if(token!==state.viewToken)return;
-    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true;
+    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},signingStatus=consoleData.signing||{},signingReady=signingStatus.ready===true,canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true;
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
       ${platformSectionTabs("github")}
@@ -6039,6 +6041,7 @@
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
             ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_9_FINAL.zip before generating a school package.</span></div>`}
             ${storageCapacity.template?`<div class="template-information"><strong>Private Storage capacity verified</strong><span>Template ${readableBytes(storageCapacity.template.configured_bytes)} • Generated packages ${readableBytes(storageCapacity.generated?.configured_bytes||0)} • private buckets enforced automatically</span></div>`:""}
+            ${signingReady?`<div class="template-information"><strong>Package signing ready</strong><span>Key ${esc(signingStatus.key_id||"verified")} • ${signingStatus.source==="vault"?"encrypted Supabase Vault persistence":"Edge Function environment secret"}${signingStatus.provisioned?" • created automatically on this refresh":""}</span></div>`:`<div class="template-information warning"><strong>Package signing setup required</strong><span>${esc(signingStatus.error||"Refresh after deploying the package-signing Vault bootstrap fix.")}</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 48 MB. Before every upload, the package manager automatically repairs and verifies the private Storage bucket capacity, then validates every required file, checksum, Android APK, and Windows EXE.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
@@ -6084,7 +6087,7 @@
             <label class="field"><span>Windows product ID</span><input name="windows_product_id" maxlength="48" pattern="[a-z][a-z0-9-]{2,47}" placeholder="example-academy"><small>Must remain unchanged for future Windows updates.</small></label>
             <label class="field"><span>Windows publisher</span><input name="windows_publisher" maxlength="100" placeholder="Example Academy"></label>
             <label class="field"><span>Windows local runtime port</span><input name="windows_runtime_port" type="number" min="18000" max="29999" placeholder="18439"><small>Use a unique port for each branded school product installed on the same computer.</small></label>
-            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template&&canGenerate?"":"disabled"}>Generate protected package</button></div>
+            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template&&canGenerate&&signingReady?"":"disabled"}>Generate protected package</button></div>
             <div id="packageGeneratorProgress" class="generator-progress full hidden" aria-live="polite"><span class="spinner small"></span><strong>Generating package</strong><span id="packageGeneratorProgressText">Authorizing platform session</span></div>
           </form>
         </section>
@@ -6098,10 +6101,10 @@
         <div class="panel-header"><div><h3>Package security audit</h3><p>Latest 200 package security events</p></div><div class="button-row"><button class="button danger small" id="packageAuditClear" type="button" ${events.length&&canRevoke?"":"disabled"}>Archive history</button></div></div>
         <div class="table-wrap platform-history-scroll"><table><thead><tr><th>Date</th><th>Event</th><th>Reason</th><th>Details</th></tr></thead><tbody>${events.length?events.map(item=>`<tr><td>${esc(isoDateTime(item.created_at))}</td><td><strong>${esc(String(item.event_type||"").replaceAll("_"," "))}</strong></td><td>${esc(item.event_reason||"—")}</td><td><code class="audit-json">${esc(JSON.stringify(item.event_data||{}))}</code></td></tr>`).join(""):`<tr><td colspan="4"><div class="empty">No package events recorded</div></td></tr>`}</tbody></table></div>
       </section>`;
-    bindGithubNavigator(packagePlans,canGenerate,canRevoke);
+    bindGithubNavigator(packagePlans,canGenerate,canRevoke,signingReady);
   }
 
-  function bindGithubNavigator(packagePlans=[],canGenerate=false,canRevoke=false) {
+  function bindGithubNavigator(packagePlans=[],canGenerate=false,canRevoke=false,signingReady=false) {
     bindPlatformSectionTabs();
     byId("platformPackageRefresh").onclick=()=>{state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     if(canGenerate)byId("platformTemplateUpload").onclick=uploadPlatformPackageTemplate;
@@ -6136,7 +6139,7 @@
     byId("platformPackageSearchClear").onclick=()=>{state.platformPackageSearch="";state.platformPackageOffset=0;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     byId("platformPackagePrevious").onclick=()=>{state.platformPackageOffset=Math.max(0,state.platformPackageOffset-state.platformPackageLimit);state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     byId("platformPackageNext").onclick=()=>{state.platformPackageOffset+=state.platformPackageLimit;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
-    if(canGenerate)byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
+    if(canGenerate&&signingReady)byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
     $$('[data-package-download]').forEach(button=>button.onclick=()=>downloadProtectedPackage(button.dataset.packageDownload,button));
     $$('[data-package-revoke]').forEach(button=>button.onclick=()=>revokeProtectedPackage(button.dataset.packageRevoke,button));
     $$('[data-package-restore]').forEach(button=>button.onclick=()=>restoreProtectedPackage(button.dataset.packageRestore,button));
