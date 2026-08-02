@@ -5,11 +5,11 @@ function stableScopeHash(value){
 }
 const CACHE_SCOPE_KEY=stableScopeHash(self.registration?.scope||self.location.href);
 const CACHE_FAMILY=`rce-report-card-${CACHE_SCOPE_KEY}-`;
-const CACHE_NAME=`${CACHE_FAMILY}v7-3-9-final-r4`;
+const CACHE_NAME=`${CACHE_FAMILY}v7-3-9-final-r5`;
 const matchCurrentCache=request=>caches.open(CACHE_NAME).then(cache=>cache.match(request));
 const STATIC_ASSETS = [
   "./","index.html","style.css","app.js","config.js","manifest.webmanifest",
-  "assets/nipe-school-logo.png","assets/school-logo.png","assets/approved-terminal-report-template.png","assets/approved-terminal-report-template.pdf",
+  "assets/school-logo.png","assets/rce-master-logo.png","assets/rce-master-logo-192.png","assets/rce-master-logo-512.png","assets/rce-master-logo-maskable-512.png","assets/favicon-32.png","assets/approved-terminal-report-template.png","assets/approved-terminal-report-template.pdf",
   "assets/vendor/supabase-2.110.5.js","assets/vendor/qrcode-1.0.0.min.js",
   "assets/vendor/pdfjs-3.11.174.min.js","assets/vendor/pdfjs-3.11.174.worker.min.js",
   "assets/vendor/jszip-3.10.1.min.js","assets/vendor/docx-preview-0.4.0.min.js",

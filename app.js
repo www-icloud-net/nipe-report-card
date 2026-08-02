@@ -5,11 +5,16 @@
   const CONFIG = Object.freeze({
     supabaseUrl: RUNTIME_CONFIG.supabaseUrl || "YOUR_SUPABASE_URL",
     supabaseAnonKey: RUNTIME_CONFIG.supabaseAnonKey || "YOUR_SUPABASE_ANON_KEY",
-    appName: RUNTIME_CONFIG.appName || "Nipe International School Report Card System",
-    schoolName: RUNTIME_CONFIG.schoolName || "Nipe International School",
-    schoolShortName: RUNTIME_CONFIG.schoolShortName || "Nipe Reports",
-    userEmailDomain: RUNTIME_CONFIG.userEmailDomain || "nip.com",
-    reportNumberPrefix: RUNTIME_CONFIG.reportNumberPrefix || "NIS",
+    productName: RUNTIME_CONFIG.productName || "Report Card Enterprise",
+    productShortName: RUNTIME_CONFIG.productShortName || "RCE",
+    productTagline: RUNTIME_CONFIG.productTagline || "School Report Card and Academic Records System",
+    productLogoPath: RUNTIME_CONFIG.productLogoPath || "assets/rce-master-logo.png",
+    masterEdition: RUNTIME_CONFIG.masterEdition === undefined ? !Boolean(RUNTIME_CONFIG.generatedSchoolPackage) : Boolean(RUNTIME_CONFIG.masterEdition),
+    appName: RUNTIME_CONFIG.appName || "Report Card Enterprise",
+    schoolName: RUNTIME_CONFIG.schoolName || "",
+    schoolShortName: RUNTIME_CONFIG.schoolShortName || "",
+    userEmailDomain: RUNTIME_CONFIG.userEmailDomain || "school.invalid",
+    reportNumberPrefix: RUNTIME_CONFIG.reportNumberPrefix || "RCE",
     generatedSchoolPackage: Boolean(RUNTIME_CONFIG.generatedSchoolPackage),
     tenantCode: RUNTIME_CONFIG.tenantCode || "",
     packageId: RUNTIME_CONFIG.packageId || "",
@@ -17,7 +22,7 @@
     projectRef: RUNTIME_CONFIG.projectRef || "",
     authorizedDomain: RUNTIME_CONFIG.authorizedDomain || "",
     licenseKeyId: RUNTIME_CONFIG.licenseKeyId || "",
-    logoPath: RUNTIME_CONFIG.logoPath || "assets/nipe-school-logo.png",
+    logoPath: RUNTIME_CONFIG.logoPath || RUNTIME_CONFIG.productLogoPath || "assets/rce-master-logo.png",
     defaultReportTemplatePath: RUNTIME_CONFIG.defaultReportTemplatePath || "assets/approved-terminal-report-template.png",
     photoBucket: "student-photos",
     pdfBucket: "report-pdfs",
@@ -172,35 +177,43 @@
     return false;
   }
   const isConfigured = () => /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(CONFIG.supabaseUrl) && isPublicSupabaseKey(CONFIG.supabaseAnonKey);
-  const legacyDefaultSchoolName = value => /^nipe international school$/i.test(String(value||"").trim());
-  const legacyDefaultLogo = value => !value || /(?:^|\/)nipe-school-logo\.png(?:$|\?)/i.test(String(value));
+  const legacyDefaultSchoolName = value => /^(?:nipe international school|your school|licensed school)$/i.test(String(value||"").trim());
+  const legacyDefaultLogo = value => !value || /(?:^|\/)(?:nipe-school-logo|rce-master-logo(?:-[0-9]+)?|school-logo)\.png(?:$|\?)/i.test(String(value));
+  function productDisplayName(){return String(CONFIG.productName||"Report Card Enterprise").trim()||"Report Card Enterprise"}
+  function productDisplayLogo(){return String(CONFIG.productLogoPath||"assets/rce-master-logo.png").trim()||"assets/rce-master-logo.png"}
   function schoolDisplayName(school=state.boot?.school||{}) {
     const databaseName=String(school?.school_name||"").trim();
-    if(CONFIG.generatedSchoolPackage&&legacyDefaultSchoolName(databaseName))return CONFIG.schoolName;
-    return databaseName||CONFIG.schoolName;
+    if(CONFIG.generatedSchoolPackage&&legacyDefaultSchoolName(databaseName))return String(CONFIG.schoolName||"Your School").trim()||"Your School";
+    return databaseName||String(CONFIG.schoolName||"Your School").trim()||"Your School";
   }
   function schoolDisplayLogo(school=state.boot?.school||{}) {
     const databaseLogo=String(school?.logo_url||"").trim();
     if(CONFIG.generatedSchoolPackage&&legacyDefaultLogo(databaseLogo))return CONFIG.logoPath;
-    return databaseLogo||CONFIG.logoPath;
+    return databaseLogo||CONFIG.logoPath||"assets/school-logo.png";
   }
+  function shellDisplayName(school=state.boot?.school||{}){return CONFIG.masterEdition?productDisplayName():schoolDisplayName(school)}
+  function shellDisplayLogo(school=state.boot?.school||{}){return CONFIG.masterEdition?productDisplayLogo():schoolDisplayLogo(school)}
+  function shellDisplaySubtitle(){return CONFIG.masterEdition?"Platform Administration":"Report Card System"}
   function schoolEmailDomain(school=state.boot?.school||{}) {
     const databaseDomain=String(school?.user_email_domain||"").trim().toLowerCase();
-    if(CONFIG.generatedSchoolPackage&&(!databaseDomain||databaseDomain==="nip.com"))return String(CONFIG.userEmailDomain||"nip.com").trim().toLowerCase();
-    return databaseDomain||String(CONFIG.userEmailDomain||"nip.com").trim().toLowerCase();
+    if(CONFIG.generatedSchoolPackage&&(!databaseDomain||["nip.com","school.invalid"].includes(databaseDomain)))return String(CONFIG.userEmailDomain||"school.invalid").trim().toLowerCase();
+    return databaseDomain||String(CONFIG.userEmailDomain||"school.invalid").trim().toLowerCase();
   }
   function schoolReportPrefix(school=state.boot?.school||{}) {
     const databasePrefix=String(school?.report_number_prefix||"").trim().toUpperCase();
-    if(CONFIG.generatedSchoolPackage&&(!databasePrefix||databasePrefix==="NIS"))return String(CONFIG.reportNumberPrefix||"NIS").trim().toUpperCase();
-    return databasePrefix||String(CONFIG.reportNumberPrefix||"NIS").trim().toUpperCase();
+    if(CONFIG.generatedSchoolPackage&&(!databasePrefix||["NIS","SCH","RCE"].includes(databasePrefix)))return String(CONFIG.reportNumberPrefix||"SCH").trim().toUpperCase();
+    return databasePrefix||String(CONFIG.reportNumberPrefix||"SCH").trim().toUpperCase();
   }
   function slugify(value,fallback="school") {
     return String(value||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,70)||fallback;
   }
   function renderStaticBrand() {
-    document.title=`${CONFIG.schoolName} | Report Cards`;
-    $$('[data-school-logo]').forEach(image=>{image.src=CONFIG.logoPath;image.alt=CONFIG.schoolName});
-    $$('[data-school-name]').forEach(node=>{node.textContent=CONFIG.schoolName});
+    const name=shellDisplayName(),logo=shellDisplayLogo();
+    document.title=CONFIG.masterEdition?productDisplayName():`${name} | Report Cards`;
+    $$('[data-school-logo]').forEach(image=>{image.src=logo;image.alt=name});
+    $$('[data-school-name]').forEach(node=>{node.textContent=name});
+    $$('[data-brand-subtitle]').forEach(node=>{node.textContent=CONFIG.masterEdition?CONFIG.productTagline:"Student Report Card System"});
+    $$('[data-shell-subtitle]').forEach(node=>{node.textContent=shellDisplaySubtitle()});
   }
 
   function toast(title, message="", type="success", timeout=4200) {
@@ -783,9 +796,12 @@
     setLoading(false);
   }
   function renderBrand() {
-    const school=state.boot.school||{};
-    byId("brandLogo").src=schoolDisplayLogo(school);
-    byId("brandName").textContent=schoolDisplayName(school);
+    const school=state.boot.school||{},name=shellDisplayName(school),logo=shellDisplayLogo(school);
+    byId("brandLogo").src=logo;
+    byId("brandLogo").alt=name;
+    byId("brandName").textContent=name;
+    $$('[data-shell-subtitle]').forEach(node=>{node.textContent=shellDisplaySubtitle()});
+    document.title=CONFIG.masterEdition?productDisplayName():`${name} | Report Cards`;
     byId("userName").textContent=state.boot.profile.full_name||state.session.user.email;
     byId("userRole").textContent=ROLE_LABELS[role()]||role();
     byId("userAvatar").textContent=(state.boot.profile.full_name||"N").trim().charAt(0).toUpperCase();
@@ -6050,7 +6066,7 @@
             <div id="schoolPackagePlanSummary" class="template-information full"></div>
             <label class="field"><span>Issue date</span><input name="issued_on" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
             <label class="field"><span>Expiry date and time (optional)</span><input name="expires_at" type="datetime-local"></label>
-            <label class="field full"><span>Authorized deployment domain</span><input name="authorized_domain" placeholder="reports.school.edu.gh" required><small>Stored in the package binding metadata for compliance and redistribution tracing.</small></label>
+            <label class="field full"><span>Deployment URL or hostname (optional)</span><input name="authorized_domain" inputmode="url" autocomplete="url" placeholder="https://username.github.io/repository/"><small>Leave blank for project-bound deployment without host locking. A GitHub Pages URL is accepted; a github.com repository URL is not a deployed website.</small></label>
             <label class="field full"><span>User account email domain (optional)</span><input name="email_domain" placeholder="school.edu.gh"><small>Leave blank to use a safe non-deliverable .invalid placeholder.</small></label>
             <label class="field full"><span>School logo</span><input id="schoolPackageLogo" name="school_logo" type="file" accept="image/png" required><small>PNG only. Maximum 5 MB. Use a square image of at least 256 by 256 pixels.</small></label>
             <div class="package-logo-preview full"><img id="schoolPackageLogoPreview" src="${CONFIG.logoPath}" alt="Package logo preview"><div><strong id="schoolPackageNamePreview">New school package</strong><span>The official package is generated and signed on the server.</span></div></div>
@@ -6184,7 +6200,8 @@
       const androidSummary=includeAndroid?` A branded Android build kit will be included for ${values.android_application_id}.`:"";
       const includeWindows=byId("includeWindowsBuildKit")?.checked===true;
       const windowsSummary=includeWindows?` A branded Windows installer build kit will be included for product ${values.windows_product_id} on local port ${values.windows_runtime_port}.`:" The confirmed universal Windows w1 installers will still be included.";
-      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name} for ${values.authorized_domain} and Supabase project ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.${androidSummary}${windowsSummary}`,"Generate signed package");if(!confirmed)return;
+      const deploymentSummary=String(values.authorized_domain||"").trim()?` with host restriction ${String(values.authorized_domain).trim()}`:" without host restriction; the package remains bound to its Supabase project, installation, tenant, and central licence authority";
+      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name}${deploymentSummary}. Supabase project: ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.${androidSummary}${windowsSummary}`,"Generate signed package");if(!confirmed)return;
       progressText.textContent="Reading and validating school logo";const logo_base64=await readFileAsDataUrl(logoFile,PACKAGE_LOGO_MAX_BYTES,PACKAGE_LOGO_TYPES);
       progressText.textContent="Generating and signing package on the server";
       if(!state.packageGenerationKey)state.packageGenerationKey=crypto.randomUUID();
