@@ -394,7 +394,7 @@
     if(msg.toLowerCase().includes("multi-factor authentication required")) return "Multi-factor authentication is required for this protected operation. Sign out, sign in again, and complete the authenticator-code step, or enable an authenticator in Settings.";
     if(msg.includes("RCE_BACKUP_ENCRYPTION_KEY is required")||msg.includes("NIS_BACKUP_ENCRYPTION_KEY")) return "The backup encryption secret is missing from the scheduled-backup Edge Function. Configure RCE_BACKUP_ENCRYPTION_KEY and redeploy the function.";
     if(msg.includes("Package signing bootstrap SQL is not installed")) return "Install the package-signing Vault bootstrap SQL once, redeploy platform-package-manager, then refresh GitHub Navigator. The signing key will be generated and encrypted automatically.";
-    if(/stored package signing public key does not match|package signing metadata repair/i.test(msg)) return "The stored signing metadata is inconsistent. Deploy the current signing-repair SQL and package manager, then refresh GitHub Navigator so the existing private key can be repaired automatically.";
+    if(/stored package signing public key does not match|package signing metadata repair/i.test(msg)) return "The private package-signing key remains protected. Deploy the current signing-continuity SQL and package manager, then refresh so its public metadata can be reconciled in place.";
     if(/package signing vault|stored package signing key|package signing key fingerprint/i.test(msg)) return "The protected package-signing key could not be read or verified. Apply the current signing recovery patch and review the platform-package-manager logs before generating packages.";
     if(/not having enough compute resources|compute resources/i.test(msg)) return "The old template validator exceeded the Edge Function compute limit. Deploy the current compute-safe package manager and frontend, then upload the template again.";
     if(msg.toLowerCase().includes("service configuration unavailable")) return "The scheduled-backup Edge Function is missing its Supabase service configuration. Redeploy it and confirm SUPABASE_URL and the service-role secret are available.";
@@ -6209,9 +6209,20 @@
     const checksumEntry=zip.file(`${root}PACKAGE_CHECKSUMS.sha256`),shaSumsEntry=zip.file(`${root}SHA256SUMS.txt`);if(!checksumEntry||!shaSumsEntry)throw new Error("The protected-template checksum files are missing.");
     const checksumBytes=await checksumEntry.async("uint8array"),shaSumsBytes=await shaSumsEntry.async("uint8array"),checksumText=new TextDecoder().decode(checksumBytes),shaSumsText=new TextDecoder().decode(shaSumsBytes),checksums=new Map();
     if(shaSumsText!==checksumText)throw new Error("PACKAGE_CHECKSUMS.sha256 and SHA256SUMS.txt do not match.");
-    for(const line of checksumText.split(/\\r?\\n/)){const match=line.match(/^([a-f0-9]{64})\\s{2}(.+)$/i);if(match)checksums.set(match[2],match[1].toLowerCase())}
+    const checksumLines=checksumText.replace(/^\uFEFF/,"").split(/\r?\n/).filter(line=>line.trim().length>0);
+    for(const line of checksumLines){
+      const match=line.match(/^([a-f0-9]{64})[ \t]+(.+)$/i);
+      if(!match)throw new Error("The checksum manifest contains an invalid line.");
+      const relative=match[2];
+      if(!safeProtectedTemplatePath(relative)||relative.endsWith("/"))throw new Error(`The checksum manifest contains an unsafe path: ${relative}`);
+      if(checksums.has(relative))throw new Error(`The checksum manifest contains a duplicate entry: ${relative}`);
+      checksums.set(relative,match[1].toLowerCase());
+    }
     const relativeFiles=files.filter(name=>name!==`${root}PACKAGE_CHECKSUMS.sha256`&&name!==`${root}SHA256SUMS.txt`).map(name=>name.slice(root.length));
-    if(checksums.size!==relativeFiles.length)throw new Error("The checksum manifest does not match the template file set.");
+    const fileSet=new Set(relativeFiles);
+    const missing=relativeFiles.filter(relative=>!checksums.has(relative));
+    const extra=[...checksums.keys()].filter(relative=>!fileSet.has(relative));
+    if(missing.length||extra.length)throw new Error(`The checksum manifest does not match the template file set${missing.length?`; missing ${missing.slice(0,3).join(", ")}`:""}${extra.length?`; extra ${extra.slice(0,3).join(", ")}`:""}.`);
     let totalUncompressed=checksumBytes.byteLength+shaSumsBytes.byteLength,checked=0;
     if(checksumBytes.byteLength>20*1024*1024||shaSumsBytes.byteLength>20*1024*1024)throw new Error("A checksum file exceeds the per-file safety limit.");
     for(const relative of relativeFiles){
