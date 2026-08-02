@@ -6026,11 +6026,35 @@
   }
 
 
+  function platformPackageGenerationBlockers(consoleData={}) {
+    const blockers=[];
+    if(consoleData.can_generate!==true)blockers.push("Distributor package-generation authority is disabled.");
+    const template=consoleData.template;
+    if(!template)blockers.push("No active protected v7.3.9 template is installed. Install or replace the template at the top of GitHub Navigator.");
+    else if(String(template.package_version||"")!=="7.3.9")blockers.push(`The active protected template is v${String(template.package_version||"unknown")}; v7.3.9 is required.`);
+    const signing=consoleData.signing||{};
+    if(signing.ready!==true)blockers.push(`Package signing is not ready${signing.error?`: ${String(signing.error)}`:"."}`);
+    if(!Array.isArray(consoleData.plans)||consoleData.plans.length===0)blockers.push("No active licence plan is available.");
+    return blockers;
+  }
+  function platformPackageGenerationReadinessHtml(consoleData={}) {
+    const blockers=platformPackageGenerationBlockers(consoleData);
+    return `<div id="packageGenerationReadiness" class="template-information full${blockers.length?" warning":""}"><strong>${blockers.length?"Package generation setup required":"Package generation ready"}</strong><span>${esc(blockers.length?blockers.join(" "):"Live prerequisites are verified. Complete the school details and select Generate protected package.")}</span></div>`;
+  }
+  function updatePlatformPackageGenerationReadiness(consoleData={}) {
+    const target=byId("packageGenerationReadiness");if(!target)return;
+    const blockers=platformPackageGenerationBlockers(consoleData);
+    target.className=`template-information full${blockers.length?" warning":""}`;
+    target.innerHTML=`<strong>${blockers.length?"Package generation setup required":"Package generation ready"}</strong><span>${esc(blockers.length?blockers.join(" "):"Live prerequisites are verified. Complete the school details and select Generate protected package.")}</span>`;
+    const button=byId("generateSchoolPackage");if(button)button.title=blockers.length?blockers.join(" "):"All package-generation prerequisites are ready.";
+  }
+
+
   async function renderGithubNavigator(token,force=false) {
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
     if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status",{offset:state.platformPackageOffset,limit:state.platformPackageLimit,search:state.platformPackageSearch});
     if(token!==state.viewToken)return;
-    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},signingStatus=consoleData.signing||{},signingReady=signingStatus.ready===true,canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true;
+    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},signingStatus=consoleData.signing||{},signingReady=signingStatus.ready===true,canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true,generationBlockers=platformPackageGenerationBlockers(consoleData);
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
       ${platformSectionTabs("github")}
@@ -6087,7 +6111,8 @@
             <label class="field"><span>Windows product ID</span><input name="windows_product_id" maxlength="48" pattern="[a-z][a-z0-9-]{2,47}" placeholder="example-academy"><small>Must remain unchanged for future Windows updates.</small></label>
             <label class="field"><span>Windows publisher</span><input name="windows_publisher" maxlength="100" placeholder="Example Academy"></label>
             <label class="field"><span>Windows local runtime port</span><input name="windows_runtime_port" type="number" min="18000" max="29999" placeholder="18439"><small>Use a unique port for each branded school product installed on the same computer.</small></label>
-            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${template&&canGenerate&&signingReady?"":"disabled"}>Generate protected package</button></div>
+            ${platformPackageGenerationReadinessHtml(consoleData)}
+            <div class="full button-row"><button class="button primary" id="generateSchoolPackage" type="button" ${canGenerate?"":"disabled"} title="${attr(generationBlockers.length?generationBlockers.join(" "):"All package-generation prerequisites are ready.")}">Generate protected package</button></div>
             <div id="packageGeneratorProgress" class="generator-progress full hidden" aria-live="polite"><span class="spinner small"></span><strong>Generating package</strong><span id="packageGeneratorProgressText">Authorizing platform session</span></div>
           </form>
         </section>
@@ -6139,7 +6164,7 @@
     byId("platformPackageSearchClear").onclick=()=>{state.platformPackageSearch="";state.platformPackageOffset=0;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     byId("platformPackagePrevious").onclick=()=>{state.platformPackageOffset=Math.max(0,state.platformPackageOffset-state.platformPackageLimit);state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
     byId("platformPackageNext").onclick=()=>{state.platformPackageOffset+=state.platformPackageLimit;state.platformPackageConsole=null;renderGithubNavigator(state.viewToken,true)};
-    if(canGenerate&&signingReady)byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
+    if(canGenerate)byId("generateSchoolPackage").onclick=generateReusableSchoolPackage;
     $$('[data-package-download]').forEach(button=>button.onclick=()=>downloadProtectedPackage(button.dataset.packageDownload,button));
     $$('[data-package-revoke]').forEach(button=>button.onclick=()=>revokeProtectedPackage(button.dataset.packageRevoke,button));
     $$('[data-package-restore]').forEach(button=>button.onclick=()=>restoreProtectedPackage(button.dataset.packageRestore,button));
@@ -6194,17 +6219,24 @@
 
   async function generateReusableSchoolPackage() {
     if(state.packageGeneratorBusy)return;
-    const form=byId("schoolPackageForm");if(!form?.reportValidity())return;
-    const values=formObject(form),logoFile=byId("schoolPackageLogo")?.files?.[0],button=byId("generateSchoolPackage"),progress=byId("packageGeneratorProgress"),progressText=byId("packageGeneratorProgressText");
-    state.packageGeneratorBusy=true;button.disabled=true;progress.classList.remove("hidden");setSync("pending","Generating package");
+    const form=byId("schoolPackageForm"),button=byId("generateSchoolPackage"),progress=byId("packageGeneratorProgress"),progressText=byId("packageGeneratorProgressText");
+    if(!form||!button||!progress||!progressText)return;
+    const originalButtonText=button.textContent;
+    state.packageGeneratorBusy=true;button.disabled=true;button.textContent="Checking readiness";progress.classList.remove("hidden");progressText.textContent="Checking live package-generation prerequisites";setSync("pending","Checking readiness");
     try{
-      const selectedPlan=(state.platformPackageConsole?.plans||[]).find(item=>String(item.id)===String(values.license_plan_code));if(!selectedPlan)throw new Error("Select a current active licence plan.");
+      const liveStatus=await invokePlatformPackageManager("status",{offset:0,limit:1,search:""});
+      const mergedStatus={...(state.platformPackageConsole||{}),...liveStatus};state.platformPackageConsole=mergedStatus;updatePlatformPackageGenerationReadiness(mergedStatus);
+      const blockers=platformPackageGenerationBlockers(mergedStatus);if(blockers.length)throw new Error(`Package generation is not ready. ${blockers.join(" ")}`);
+      if(!form.reportValidity()){setSync("online","Synced");return}
+      const values=formObject(form),logoFile=byId("schoolPackageLogo")?.files?.[0];
+      const selectedPlan=(liveStatus.plans||[]).find(item=>String(item.id)===String(values.license_plan_code));if(!selectedPlan)throw new Error("Select a current active licence plan.");
+      button.textContent="Generating package";progressText.textContent="Preparing package entitlement";setSync("pending","Generating package");
       const includeAndroid=byId("includeAndroidBuildKit")?.checked===true;
       const androidSummary=includeAndroid?` A branded Android build kit will be included for ${values.android_application_id}.`:"";
       const includeWindows=byId("includeWindowsBuildKit")?.checked===true;
       const windowsSummary=includeWindows?` A branded Windows installer build kit will be included for product ${values.windows_product_id} on local port ${values.windows_runtime_port}.`:" The confirmed universal Windows w1 installers will still be included.";
       const deploymentSummary=String(values.authorized_domain||"").trim()?` with host restriction ${String(values.authorized_domain).trim()}`:" without host restriction; the package remains bound to its Supabase project, installation, tenant, and central licence authority";
-      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name}${deploymentSummary}. Supabase project: ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.${androidSummary}${windowsSummary}`,"Generate signed package");if(!confirmed)return;
+      const confirmed=await confirmAction("Confirm licensed package entitlement",`${selectedPlan.name} revision ${selectedPlan.revision||1} will be issued to ${values.school_name}${deploymentSummary}. Supabase project: ${String(values.supabase_url).replace(/^https?:\/\//,"").split(".")[0]}. The generated school cannot distribute other packages.${androidSummary}${windowsSummary}`,"Generate signed package");if(!confirmed){setSync("online","Synced");return}
       progressText.textContent="Reading and validating school logo";const logo_base64=await readFileAsDataUrl(logoFile,PACKAGE_LOGO_MAX_BYTES,PACKAGE_LOGO_TYPES);
       progressText.textContent="Generating and signing package on the server";
       if(!state.packageGenerationKey)state.packageGenerationKey=crypto.randomUUID();
@@ -6214,7 +6246,7 @@
       const link=document.createElement("a");link.href=data.signed_url;link.rel="noopener";link.click();
       toast("Protected package generated",`${data.artifact.filename} is ready. The signed download URL expires in ${number(data.expires_in)} seconds.`,"success",9000);state.platformPackageConsole=null;setSync("online","Synced");await renderGithubNavigator(state.viewToken,true);
     }catch(error){toast("Package not generated",friendlyError(error),"error",9000);setSync("pending","Retry required");await reportClientError(error,{source:"platform_package_manager"})}
-    finally{state.packageGeneratorBusy=false;button.disabled=false;progress.classList.add("hidden")}
+    finally{state.packageGeneratorBusy=false;button.disabled=false;button.textContent=originalButtonText;progress.classList.add("hidden")}
   }
 
   async function downloadProtectedPackage(artifactId,button) {
