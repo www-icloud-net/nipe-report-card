@@ -25,5 +25,8 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "id": "./",
+  "scope": "./",
+  "version": "7.4.0"
 }

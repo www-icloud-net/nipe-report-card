@@ -6,6 +6,7 @@
     supabaseUrl: RUNTIME_CONFIG.supabaseUrl || "YOUR_SUPABASE_URL",
     supabaseAnonKey: RUNTIME_CONFIG.supabaseAnonKey || "YOUR_SUPABASE_ANON_KEY",
     productName: RUNTIME_CONFIG.productName || "Report Card Enterprise",
+    productVersion: RUNTIME_CONFIG.productVersion || "7.4.0",
     productShortName: RUNTIME_CONFIG.productShortName || "RCE",
     productTagline: RUNTIME_CONFIG.productTagline || "School Report Card and Academic Records System",
     productLogoPath: RUNTIME_CONFIG.productLogoPath || "assets/rce-master-logo.png",
@@ -5382,7 +5383,7 @@
         const path=paths[index],{data,error}=await state.client.storage.from(CONFIG.backupBucket).download(path);if(error)throw error;
         zip.file(path.startsWith(prefix)?path.slice(prefix.length):path,await data.arrayBuffer(),{binary:true});
       }
-      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.3.9 Final Multi-Platform Branding and Distribution Reusable Schools Edition\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
+      zip.file("RESTORE_README.txt",`${schoolDisplayName()} Report Card Enterprise v7.4.0 Final Stable Multi-Platform Release\n\nThis package contains AES-256-GCM encrypted backup payloads. Keep the RCE_BACKUP_ENCRYPTION_KEY secret separately. Legacy NIS_BACKUP_ENCRYPTION_KEY remains supported temporarily. Follow FINAL_BACKUP_AND_RESTORE_RUNBOOK.md from the complete system package. Authentication password hashes are not exportable through the supported Supabase Auth API; users must reset passwords after a full project rebuild.\n`);
       const blob=await zip.generateAsync({type:"blob",compression:"STORE"});
       const filename=`${slugify(schoolDisplayName(),"school")}-Full-Backup-${backup.backup_key}.zip`;downloadBlob(filename,blob);
       toast("Encrypted package downloaded",`${filename}. After copying it to a separate secure location, use Confirm off-site copy.`);setSync("online","Synced");
@@ -5661,7 +5662,7 @@
 
   function githubNavigatorStepsHtml() {
     return `<div class="navigator-steps">
-      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.3.9 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
+      <article><b>1</b><div><strong>Install protected template</strong><span>Upload the official v7.4.0 package template. It is stored in a private Supabase bucket and never published with the school frontend.</span></div></article>
       <article><b>2</b><div><strong>Generate licensed package</strong><span>Bind the package to a school, tenant code, licence reference, plan, and optional authorized domain.</span></div></article>
       <article><b>3</b><div><strong>Download securely</strong><span>The server returns a short-lived signed URL and records every authorized download.</span></div></article>
       <article><b>4</b><div><strong>Deploy and distribute</strong><span>Deploy only GITHUB_PAGES_FRONTEND, then distribute the confirmed Android r6 APK, Windows w1 setup EXE, or privately built school-branded installers.</span></div></article>
@@ -5702,7 +5703,7 @@
   }
 
 
-  // Report Card Enterprise v7.3.9 Final stable multi-platform Android and Windows branding and distribution release
+  // Report Card Enterprise v7.4.0 Final production-stability multi-platform release
   const CERTIFICATE_TYPES=Object.freeze([
     {value:"student_promotion",label:"Student Promotion",requiresTerm:true,requiresClass:true},
     {value:"jhs_completion",label:"JHS 3 Completion",requiresTerm:false,requiresClass:true},
@@ -6032,10 +6033,12 @@
     const blockers=[];
     if(consoleData.can_generate!==true)blockers.push("Distributor package-generation authority is disabled.");
     const template=consoleData.template;
-    if(!template)blockers.push("No active protected v7.3.9 template is installed. Install or replace the template at the top of GitHub Navigator.");
-    else if(String(template.package_version||"")!=="7.3.9")blockers.push(`The active protected template is v${String(template.package_version||"unknown")}; v7.3.9 is required.`);
+    if(!template)blockers.push("No active protected v7.4.0 template is installed. Install or replace the template at the top of GitHub Navigator.");
+    else if(String(template.package_version||"")!=="7.4.0")blockers.push(`The active protected template is v${String(template.package_version||"unknown")}; v7.4.0 is required.`);
     const signing=consoleData.signing||{};
     if(signing.ready!==true)blockers.push(`Package signing is not ready${signing.error?`: ${String(signing.error)}`:"."}`);
+    const releaseHealth=consoleData.release_health||{};
+    if(releaseHealth.ready!==true)blockers.push(`System release health is not ready${Array.isArray(releaseHealth.missing)&&releaseHealth.missing.length?`: ${releaseHealth.missing.join(", ")}`:"."}`);
     if(!Array.isArray(consoleData.plans)||consoleData.plans.length===0)blockers.push("No active licence plan is available.");
     return blockers;
   }
@@ -6056,7 +6059,7 @@
     if(role()!=="platform_super_admin")throw new Error("Platform Super Administrator access required");
     if(force||!state.platformPackageConsole)state.platformPackageConsole=await invokePlatformPackageManager("status",{offset:state.platformPackageOffset,limit:state.platformPackageLimit,search:state.platformPackageSearch});
     if(token!==state.viewToken)return;
-    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},signingStatus=consoleData.signing||{},signingReady=signingStatus.ready===true,canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true,generationBlockers=platformPackageGenerationBlockers(consoleData);
+    const consoleData=state.platformPackageConsole||{},template=consoleData.template,artifacts=consoleData.artifacts||[],events=consoleData.events||[],packagePlans=consoleData.plans||[],storageCapacity=consoleData.storage_capacity||{},signingStatus=consoleData.signing||{},signingReady=signingStatus.ready===true,releaseHealth=consoleData.release_health||{},canGenerate=consoleData.can_generate===true,canRevoke=consoleData.can_revoke===true,generationBlockers=platformPackageGenerationBlockers(consoleData);
     byId("content").innerHTML=`
       <div class="page-head platform-page-head"><div><h3>GitHub Navigator</h3><p>Platform-owner-only reusable package control</p></div><div class="button-row"><button class="button ghost" id="platformPackageRefresh" type="button">Refresh</button></div></div>
       ${platformSectionTabs("github")}
@@ -6064,9 +6067,10 @@
         <div class="grid">
           <section class="panel pad">
             <div class="section-title"><div><h4>Protected package template</h4><p>The official complete package ZIP is stored server-side and verified before use.</p></div></div>
-            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_3_9_FINAL.zip before generating a school package.</span></div>`}
+            ${template?`<div class="template-information"><strong>Template v${esc(template.package_version)}</strong><span>SHA-256 ${esc(template.sha256)} • ${readableBytes(template.file_size)} • Installed ${esc(isoDateTime(template.created_at))}</span></div>`:`<div class="empty"><strong>No package template installed</strong><span>Upload PLATFORM_PACKAGE_TEMPLATE_v7_4_0_FINAL.zip before generating a school package.</span></div>`}
             ${storageCapacity.template?`<div class="template-information"><strong>Private Storage capacity verified</strong><span>Template ${readableBytes(storageCapacity.template.configured_bytes)} • Generated packages ${readableBytes(storageCapacity.generated?.configured_bytes||0)} • private buckets enforced automatically</span></div>`:""}
             ${signingReady?`<div class="template-information"><strong>Package signing ready</strong><span>Key ${esc(signingStatus.key_id||"verified")} • ${signingStatus.source==="vault"?"encrypted Supabase Vault persistence":"Edge Function environment secret"}${signingStatus.provisioned?" • created automatically on this refresh":""}${signingStatus.repaired?" • metadata repaired automatically":""}${signingStatus.warning?` • ${esc(signingStatus.warning)}`:""}</span></div>`:`<div class="template-information warning"><strong>Package signing setup required</strong><span>${esc(signingStatus.error||"Refresh after deploying the package-signing Vault bootstrap fix.")}</span></div>`}
+            ${releaseHealth.ready===true?`<div class="template-information"><strong>v7.4.0 system health verified</strong><span>Required database objects, package services, Vault availability, and release controls are present.</span></div>`:`<div class="template-information warning"><strong>v7.4.0 system health setup required</strong><span>${esc(Array.isArray(releaseHealth.missing)&&releaseHealth.missing.length?releaseHealth.missing.join(", "):releaseHealth.error||"Run the v7.4.0 production-stability SQL, redeploy the current Edge Functions, and refresh.")}</span></div>`}
             <form id="platformTemplateForm" class="form-grid" style="margin-top:16px">
               <label class="field full"><span>Official package template ZIP</span><input id="platformPackageTemplate" name="template" type="file" accept=".zip,application/zip,application/x-zip-compressed" required ${canGenerate?"":"disabled"}><small>Maximum 48 MB. The browser performs the complete checksum scan, then the server verifies the archive digest, structure, release metadata, critical files, Android APK, and Windows EXEs without exhausting Edge Function compute resources.</small></label>
               <div class="full button-row"><button class="button secondary" id="platformTemplateUpload" type="button" ${canGenerate?"":"disabled"}>Install or replace template</button></div>
@@ -6232,7 +6236,7 @@
       checked+=1;if(checked===1||checked%20===0||checked===relativeFiles.length){onProgress(`Validating template checksums (${checked}/${relativeFiles.length})`);await new Promise(resolve=>setTimeout(resolve,0))}
     }
     let manifest;try{manifest=JSON.parse(await zip.file(`${root}PROJECT_MANIFEST.json`).async("string"))}catch{throw new Error("PROJECT_MANIFEST.json is invalid JSON.")}
-    if(String(manifest.version||"")!=="7.3.9")throw new Error("The protected template version must be 7.3.9.");
+    if(String(manifest.version||"")!=="7.4.0")throw new Error("The protected template version must be 7.4.0.");
     return {archive_sha256,checksum_manifest_sha256:await sha256BytesHex(checksumBytes),file_count:files.length,total_uncompressed_bytes:totalUncompressed,package_root:root};
   }
 
